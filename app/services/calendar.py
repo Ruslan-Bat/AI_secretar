@@ -1,0 +1,89 @@
+"""Проверяет строгий формат команд и вызывает независимый CalendarGateway."""
+
+from collections.abc import Callable
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+
+from app.core.calendar_exceptions import CalendarInputError
+from app.domain.calendar_event import CalendarEvent
+from app.integrations.calendar import CalendarGateway
+
+
+Clock = Callable[[], datetime]
+
+
+def utc_now() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class CalendarService:
+    def __init__(
+        self,
+        gateway: CalendarGateway,
+        *,
+        time_zone: str,
+        max_results: int = 10,
+        clock: Clock = utc_now,
+    ) -> None:
+        self._gateway = gateway
+        self._time_zone = ZoneInfo(time_zone)
+        self._max_results = max_results
+        self._clock = clock
+
+    async def list_upcoming(self) -> list[CalendarEvent]:
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        return await self._gateway.list_upcoming(
+            time_min=now.astimezone(timezone.utc),
+            limit=self._max_results,
+        )
+
+    async def create_from_text(self, arguments: str | None) -> CalendarEvent:
+        if not arguments:
+            raise CalendarInputError(
+                "Формат: /add_event ГГГГ-ММ-ДД ЧЧ:ММ МИНУТЫ НАЗВАНИЕ"
+            )
+
+        parts = arguments.strip().split(maxsplit=3)
+        if len(parts) != 4:
+            raise CalendarInputError(
+                "Формат: /add_event ГГГГ-ММ-ДД ЧЧ:ММ МИНУТЫ НАЗВАНИЕ"
+            )
+
+        date_text, time_text, duration_text, title = parts
+        try:
+            start = datetime.strptime(
+                f"{date_text} {time_text}",
+                "%Y-%m-%d %H:%M",
+            ).replace(tzinfo=self._time_zone)
+        except ValueError:
+            raise CalendarInputError(
+                "Дата и время должны иметь формат ГГГГ-ММ-ДД ЧЧ:ММ"
+            ) from None
+
+        try:
+            duration_minutes = int(duration_text)
+        except ValueError:
+            raise CalendarInputError("Длительность должна быть числом минут") from None
+
+        if not 1 <= duration_minutes <= 1440:
+            raise CalendarInputError("Длительность должна быть от 1 до 1440 минут")
+
+        title = title.strip()
+        if not title or len(title) > 200:
+            raise CalendarInputError("Название должно содержать от 1 до 200 символов")
+
+        return await self._gateway.create_event(
+            title=title,
+            start=start,
+            end=start + timedelta(minutes=duration_minutes),
+        )
+
+    async def delete_from_text(self, arguments: str | None) -> None:
+        event_id = (arguments or "").strip()
+        if not event_id or any(character.isspace() for character in event_id):
+            raise CalendarInputError("Формат: /delete_event EVENT_ID")
+        if len(event_id) > 1024:
+            raise CalendarInputError("Некорректный EVENT_ID")
+        await self._gateway.delete_event(event_id)
