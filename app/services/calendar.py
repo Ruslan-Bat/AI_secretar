@@ -2,11 +2,16 @@
 
 from collections.abc import Callable
 from datetime import datetime, timedelta, timezone
+from typing import Any
 from zoneinfo import ZoneInfo
 
-from app.core.calendar_exceptions import CalendarInputError
+from app.core.calendar_exceptions import (
+    CalendarAuthRequiredError,
+    CalendarInputError,
+)
 from app.domain.calendar_event import CalendarEvent
 from app.integrations.calendar import CalendarGateway
+from app.services.google_auth import GoogleAuthService
 
 
 Clock = Callable[[], datetime]
@@ -24,11 +29,13 @@ class CalendarService:
         time_zone: str,
         max_results: int = 10,
         clock: Clock = utc_now,
+        auth_service: GoogleAuthService | None = None,
     ) -> None:
         self._gateway = gateway
         self._time_zone = ZoneInfo(time_zone)
         self._max_results = max_results
         self._clock = clock
+        self._auth_service = auth_service
 
     async def list_upcoming(self) -> list[CalendarEvent]:
         now = self._clock()
@@ -39,7 +46,12 @@ class CalendarService:
             limit=self._max_results,
         )
 
-    async def create_from_text(self, arguments: str | None) -> CalendarEvent:
+    async def _get_user_credentials(self, telegram_id: int) -> Any | None:
+        if self._auth_service is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        return await self._auth_service.get_oauth_credentials(telegram_id)
+
+    async def create_from_text(self, arguments: str | None, telegram_id: int | None = None) -> CalendarEvent:
         if not arguments:
             raise CalendarInputError(
                 "Формат: /add_event ГГГГ-ММ-ДД ЧЧ:ММ МИНУТЫ НАЗВАНИЕ"
@@ -73,17 +85,24 @@ class CalendarService:
         title = title.strip()
         if not title or len(title) > 200:
             raise CalendarInputError("Название должно содержать от 1 до 200 символов")
+        if telegram_id is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
 
+        user_credentials = await self._get_user_credentials(telegram_id)
         return await self._gateway.create_event(
             title=title,
             start=start,
             end=start + timedelta(minutes=duration_minutes),
+            user_credentials=user_credentials,
         )
 
-    async def delete_from_text(self, arguments: str | None) -> None:
+    async def delete_from_text(self, arguments: str | None, telegram_id: int | None = None) -> None:
         event_id = (arguments or "").strip()
         if not event_id or any(character.isspace() for character in event_id):
             raise CalendarInputError("Формат: /delete_event EVENT_ID")
         if len(event_id) > 1024:
             raise CalendarInputError("Некорректный EVENT_ID")
-        await self._gateway.delete_event(event_id)
+        if telegram_id is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        user_credentials = await self._get_user_credentials(telegram_id)
+        await self._gateway.delete_event(event_id, user_credentials=user_credentials)

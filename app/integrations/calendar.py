@@ -1,7 +1,7 @@
 """Интерфейс календаря, используемый сервисами приложения."""
 
 from datetime import datetime
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from app.domain.calendar_event import CalendarEvent
 
@@ -13,6 +13,7 @@ class CalendarGateway(Protocol):
         *,
         time_min: datetime,
         limit: int,
+        user_credentials: Any | None = None,
     ) -> list[CalendarEvent]:
         """Возвращает ближайшие события, отсортированные по времени начала."""
         ...
@@ -23,9 +24,10 @@ class CalendarGateway(Protocol):
         title: str,
         start: datetime,
         end: datetime,
+        user_credentials: Any | None = None,
     ) -> CalendarEvent:
         """Создаёт и возвращает событие с заданным временем."""
         ...
         
-    async def delete_event(self, event_id: str) -> None:
+    async def delete_event(self, event_id: str, user_credentials: Any | None = None) -> None:
         """Удаляет событие по идентификатору Google Calendar."""

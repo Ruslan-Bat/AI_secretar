@@ -98,7 +98,9 @@ class GoogleOAuthIntegration:
             refresh_token=tokens.get("refresh_token"),
             client_id=tokens.get("client_id"),
             client_secret=tokens.get("client_secret"),
+            token_uri=tokens.get("token_uri"),
             scopes=tokens.get("scopes"),
+            expiry=tokens.get("expiry"),
         )
 
     def refresh_credentials(self, credentials: Credentials) -> Credentials:

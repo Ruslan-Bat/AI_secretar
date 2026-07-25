@@ -9,6 +9,7 @@ from typing import Any
 from zoneinfo import ZoneInfo
 
 from google.oauth2 import service_account
+from google.oauth2.credentials import Credentials as OAuthCredentials
 from googleapiclient.discovery import Resource, build
 
 from app.core.calendar_exceptions import CalendarIntegrationError
@@ -37,7 +38,15 @@ class GoogleCalendarGateway:
         self._service_lock = threading.Lock()
         self._request_lock = threading.Lock()
 
-    def _get_service(self) -> Resource:
+    def _get_service(self, user_credentials: OAuthCredentials | None = None) -> Any:
+        if user_credentials is not None:
+            return build(
+                "calendar",
+                "v3",
+                credentials=user_credentials,
+                cache_discovery=False,
+            )
+
         # Учётные данные загружаются только при первой календарной команде.
         with self._service_lock:
             if self._service is None:
@@ -58,10 +67,11 @@ class GoogleCalendarGateway:
         *,
         time_min: datetime,
         limit: int,
+        user_credentials: OAuthCredentials | None = None,
     ) -> list[CalendarEvent]:
         try:
             # Официальный клиент Google синхронный, поэтому не блокируем цикл событий.
-            return await asyncio.to_thread(self._list_upcoming, time_min, limit)
+            return await asyncio.to_thread(self._list_upcoming, time_min, limit, user_credentials)
         except Exception as error:
             logger.warning("Google Calendar list failed (%s)", type(error).__name__)
             raise CalendarIntegrationError(
@@ -74,28 +84,34 @@ class GoogleCalendarGateway:
         title: str,
         start: datetime,
         end: datetime,
+        user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
         try:
-            return await asyncio.to_thread(self._create_event, title, start, end)
+            return await asyncio.to_thread(self._create_event, title, start, end, user_credentials)
         except Exception as error:
             logger.warning("Google Calendar insert failed (%s)", type(error).__name__)
             raise CalendarIntegrationError(
                 "Google Calendar is temporarily unavailable"
             ) from None
 
-    async def delete_event(self, event_id: str) -> None:
+    async def delete_event(self, event_id: str, user_credentials: OAuthCredentials | None = None) -> None:
         try:
-            await asyncio.to_thread(self._delete_event, event_id)
+            await asyncio.to_thread(self._delete_event, event_id, user_credentials)
         except Exception as error:
             logger.warning("Google Calendar delete failed (%s)", type(error).__name__)
             raise CalendarIntegrationError(
                 "Google Calendar is temporarily unavailable"
             ) from None
 
-    def _list_upcoming(self, time_min: datetime, limit: int) -> list[CalendarEvent]:
+    def _list_upcoming(
+        self,
+        time_min: datetime,
+        limit: int,
+        user_credentials: OAuthCredentials | None = None,
+    ) -> list[CalendarEvent]:
         with self._request_lock:
             response = (
-                self._get_service()
+                self._get_service(user_credentials)
                 .events()
                 .list(
                     calendarId=self._calendar_id,
@@ -121,6 +137,7 @@ class GoogleCalendarGateway:
         title: str,
         start: datetime,
         end: datetime,
+        user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
         body = {
             "summary": title,
@@ -135,17 +152,17 @@ class GoogleCalendarGateway:
         }
         with self._request_lock:
             result = (
-                self._get_service()
+                self._get_service(user_credentials)
                 .events()
                 .insert(calendarId=self._calendar_id, body=body)
                 .execute()
             )
         return self._from_google_event(result)
 
-    def _delete_event(self, event_id: str) -> None:
+    def _delete_event(self, event_id: str, user_credentials: OAuthCredentials | None = None) -> None:
         with self._request_lock:
             (
-                self._get_service()
+                self._get_service(user_credentials)
                 .events()
                 .delete(calendarId=self._calendar_id, eventId=event_id)
                 .execute()

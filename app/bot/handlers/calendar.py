@@ -7,7 +7,12 @@ from aiogram.filters import Command
 from aiogram.filters.command import CommandObject
 from aiogram.types import Message
 
-from app.core.calendar_exceptions import CalendarInputError, CalendarIntegrationError
+from app.core.calendar_exceptions import (
+    CalendarAuthRequiredError,
+    CalendarInputError,
+    CalendarIntegrationError,
+    CalendarTokenRefreshError,
+)
 from app.domain.calendar_event import CalendarEvent
 from app.services.calendar import CalendarService
 
@@ -70,13 +75,24 @@ async def handle_add_event(
         await message.answer(NOT_CONFIGURED_MESSAGE)
         return
 
+    from_user = getattr(message, "from_user", None)
+
     try:
-        event = await calendar_service.create_from_text(command.args)
+        if from_user is None:
+            event = await calendar_service.create_from_text(command.args)
+        else:
+            event = await calendar_service.create_from_text(command.args, from_user.id)
     except CalendarInputError as error:
         await message.answer(str(error))
         return
+    except CalendarAuthRequiredError:
+        await message.answer("Нужно пройти /login")
+        return
+    except CalendarTokenRefreshError:
+        await message.answer("Не удалось обновить токен")
+        return
     except CalendarIntegrationError:
-        await message.answer(UNAVAILABLE_MESSAGE)
+        await message.answer("Не удалось обратиться к Google Calendar")
         return
 
     await message.answer("Событие добавлено в Google Calendar:\n" + _format_event(event))
@@ -91,13 +107,24 @@ async def handle_delete_event(
         await message.answer(NOT_CONFIGURED_MESSAGE)
         return
 
+    from_user = getattr(message, "from_user", None)
+
     try:
-        await calendar_service.delete_from_text(command.args)
+        if from_user is None:
+            await calendar_service.delete_from_text(command.args)
+        else:
+            await calendar_service.delete_from_text(command.args, from_user.id)
     except CalendarInputError as error:
         await message.answer(str(error))
         return
+    except CalendarAuthRequiredError:
+        await message.answer("Нужно пройти /login")
+        return
+    except CalendarTokenRefreshError:
+        await message.answer("Не удалось обновить токен")
+        return
     except CalendarIntegrationError:
-        await message.answer(UNAVAILABLE_MESSAGE)
+        await message.answer("Не удалось обратиться к Google Calendar")
         return
 
     await message.answer("Событие удалено из Google Calendar.")

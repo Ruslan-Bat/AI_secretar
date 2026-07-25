@@ -2,6 +2,7 @@
 
 from typing import Protocol, runtime_checkable
 
+from app.domain.credentials import GoogleCredentials
 from app.domain.user import User
 
 
@@ -17,4 +18,15 @@ class UserRepository(Protocol):
 
     async def count(self) -> int:
         """Возвращает количество сохранённых пользователей."""
+        ...
+
+
+@runtime_checkable
+class CredentialsRepository(Protocol):
+    async def get_by_telegram_id(self, telegram_id: int) -> GoogleCredentials | None:
+        """Возвращает Google credentials по telegram_id."""
+        ...
+
+    async def upsert(self, credentials: GoogleCredentials) -> GoogleCredentials:
+        """Сохраняет или обновляет Google credentials."""
         ...

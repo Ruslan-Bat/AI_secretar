@@ -11,3 +11,11 @@ class CalendarInputError(CalendarError):
 
 class CalendarIntegrationError(CalendarError):
     """Возникает, если Google Calendar не может выполнить операцию."""
+
+
+class CalendarAuthRequiredError(CalendarError):
+    """Возникает, если у пользователя нет активной OAuth-связи с Google."""
+
+
+class CalendarTokenRefreshError(CalendarError):
+    """Возникает, если не удалось обновить access token пользователя."""

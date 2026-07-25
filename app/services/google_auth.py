@@ -4,25 +4,43 @@ from __future__ import annotations
 
 import jwt
 from datetime import datetime, timedelta, timezone
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from google.auth.transport import requests
 from google.oauth2 import id_token
 from google.oauth2.credentials import Credentials
 
 from app.config import Settings
+from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarTokenRefreshError
 from app.domain.credentials import GoogleCredentials
 from app.integrations.google_auth import GoogleOAuthIntegration
-from app.repositories.sql_user import SqlCredentialsRepository 
+from app.repositories.user import CredentialsRepository
+
+
+@runtime_checkable
+class GoogleOAuthIntegrationProtocol(Protocol):
+    _scopes: list[str]
+
+    def build_authorization_url(self, state: str | None = None) -> str:
+        ...
+
+    def exchange_code_for_tokens(self, code: str, state: str | None = None) -> dict[str, Any]:
+        ...
+
+    def build_credentials(self, tokens: dict[str, Any]) -> Any:
+        ...
+
+    def refresh_credentials(self, credentials: Any) -> Any:
+        ...
 
 
 class GoogleAuthService:
     """Управляет стартом OAuth, обменом кода на токен и сохранением токенов в БД."""
 
-    def __init__(self, settings: Settings, credentials_repo: SqlCredentialsRepository) -> None:
+    def __init__(self, settings: Settings, credentials_repo: CredentialsRepository) -> None:
         self._settings = settings
         self._repository = credentials_repo
-        self._integration = GoogleOAuthIntegration(settings=settings)
+        self._integration: GoogleOAuthIntegrationProtocol = GoogleOAuthIntegration(settings=settings)
         # Ensure we use a plain str for PyJWT and static type checkers (SecretStr is not acceptable)
         if getattr(settings, "JWT_SECRET", None):
             self._jwt_secret: str = settings.JWT_SECRET.get_secret_value()
@@ -119,5 +137,44 @@ class GoogleAuthService:
             "client_id": self._settings.GOOGLE_CLIENT_ID,
             "client_secret": self._settings.GOOGLE_CLIENT_SECRET,
             "scopes": self._integration._scopes,
+            "expiry": db_creds.expires_at,
         }
         return self._integration.build_credentials(tokens_dict)
+
+    async def ensure_fresh_credentials(self, telegram_id: int) -> Credentials:
+        """Возвращает OAuth-credentials пользователя, обновляя access token при необходимости."""
+        db_creds = await self.get_credentials(telegram_id)
+        if db_creds is None or not db_creds.access_token:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+
+        credentials = self.build_oauth_credentials(db_creds)
+        if db_creds.expires_at is None or db_creds.expires_at <= datetime.now(timezone.utc) + timedelta(minutes=5):
+            if not db_creds.refresh_token:
+                raise CalendarTokenRefreshError("Не удалось обновить токен")
+            try:
+                self._integration.refresh_credentials(credentials)
+            except Exception as error:
+                raise CalendarTokenRefreshError("Не удалось обновить токен") from error
+
+            expiry = credentials.expiry
+            if expiry is not None:
+                if expiry.tzinfo is None:
+                    expiry = expiry.replace(tzinfo=timezone.utc)
+                else:
+                    expiry = expiry.astimezone(timezone.utc)
+
+            refreshed_creds = GoogleCredentials(
+                telegram_id=db_creds.telegram_id,
+                access_token=credentials.token or db_creds.access_token,
+                refresh_token=credentials.refresh_token or db_creds.refresh_token,
+                expires_at=expiry,
+                email=db_creds.email,
+            )
+            await self._repository.upsert(refreshed_creds)
+            return credentials
+
+        return credentials
+
+    async def get_oauth_credentials(self, telegram_id: int) -> Credentials:
+        """Возвращает актуальные OAuth-credentials для пользователя из БД."""
+        return await self.ensure_fresh_credentials(telegram_id)

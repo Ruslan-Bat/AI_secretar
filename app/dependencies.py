@@ -44,6 +44,11 @@ def build_container(
             time_zone=settings.GOOGLE_CALENDAR_TIMEZONE,
         )
 
+    # Инициализация auth_service
+    auth_service = None
+    if settings is not None:
+        auth_service = get_google_auth_service(settings)
+
     calendar_service = None
     if gateway is not None:
         calendar_service = CalendarService(
@@ -56,12 +61,8 @@ def build_container(
             max_results=(
                 settings.GOOGLE_CALENDAR_MAX_RESULTS if settings is not None else 10
             ),
+            auth_service=auth_service,
         )
-
-    # Инициализация auth_service
-    auth_service = None
-    if settings is not None:
-        auth_service = get_google_auth_service(settings)
 
     return AppContainer(
         user_repository=repository,
