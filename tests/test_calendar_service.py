@@ -77,13 +77,37 @@ async def test_lists_upcoming_events_with_limit() -> None:
     )
     gateway.events = [expected]
 
-    result = await make_service(gateway).list_upcoming()
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
+
+    result = await make_service(gateway, auth_service=auth_service).list_upcoming(telegram_id=123)
 
     assert result == [expected]
     assert gateway.list_call == (
         datetime(2026, 7, 19, 10, 0, tzinfo=timezone.utc),
         5,
-        None,
+        "credentials",
+    )
+
+
+@pytest.mark.asyncio
+async def test_lists_upcoming_events_with_user_credentials() -> None:
+    gateway = FakeCalendarGateway()
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
+    expected = CalendarEvent(
+        event_id="event-1",
+        title="Встреча",
+        start=datetime(2026, 7, 20, 14, 30, tzinfo=timezone.utc),
+        end=datetime(2026, 7, 20, 15, 30, tzinfo=timezone.utc),
+    )
+    gateway.events = [expected]
+
+    result = await make_service(gateway, auth_service=auth_service).list_upcoming(telegram_id=123)
+
+    assert result == [expected]
+    assert gateway.list_call == (
+        datetime(2026, 7, 19, 10, 0, tzinfo=timezone.utc),
+        5,
+        "credentials",
     )
 
 

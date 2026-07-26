@@ -1,23 +1,21 @@
-"""Адаптер Google Calendar API с авторизацией через сервисную учётную запись."""
+"""Адаптер Google Calendar API с авторизацией через OAuth пользователя."""
 
 import asyncio
 import logging
 import threading
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
-from google.oauth2 import service_account
 from google.oauth2.credentials import Credentials as OAuthCredentials
-from googleapiclient.discovery import Resource, build
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 
-from app.core.calendar_exceptions import CalendarIntegrationError
+from app.core.calendar_exceptions import CalendarIntegrationError, EventNotFoundError
 from app.domain.calendar_event import CalendarEvent
 
 
 logger = logging.getLogger(__name__)
-CALENDAR_SCOPE = "https://www.googleapis.com/auth/calendar.events"
 
 
 class GoogleCalendarGateway:
@@ -26,41 +24,25 @@ class GoogleCalendarGateway:
     def __init__(
         self,
         *,
-        credentials_file: Path,
-        calendar_id: str,
         time_zone: str,
     ) -> None:
-        self._credentials_file = credentials_file
-        self._calendar_id = calendar_id
         self._time_zone_name = time_zone
         self._time_zone = ZoneInfo(time_zone)
-        self._service: Resource | None = None
-        self._service_lock = threading.Lock()
-        self._request_lock = threading.Lock()
 
     def _get_service(self, user_credentials: OAuthCredentials | None = None) -> Any:
-        if user_credentials is not None:
-            return build(
-                "calendar",
-                "v3",
-                credentials=user_credentials,
-                cache_discovery=False,
+        if user_credentials is None:
+            raise ValueError("OAuth credentials are required to access Google Calendar")
+        if not isinstance(user_credentials, OAuthCredentials):
+            raise TypeError(
+                f"GoogleCalendarGateway expected OAuthCredentials, got {type(user_credentials).__name__}"
             )
 
-        # Учётные данные загружаются только при первой календарной команде.
-        with self._service_lock:
-            if self._service is None:
-                credentials = service_account.Credentials.from_service_account_file(
-                    str(self._credentials_file),
-                    scopes=[CALENDAR_SCOPE],
-                )
-                self._service = build(
-                    "calendar",
-                    "v3",
-                    credentials=credentials,
-                    cache_discovery=False,
-                )
-            return self._service
+        return build(
+            "calendar",
+            "v3",
+            credentials=user_credentials,
+            cache_discovery=False,
+        )
 
     async def list_upcoming(
         self,
@@ -70,13 +52,12 @@ class GoogleCalendarGateway:
         user_credentials: OAuthCredentials | None = None,
     ) -> list[CalendarEvent]:
         try:
-            # Официальный клиент Google синхронный, поэтому не блокируем цикл событий.
             return await asyncio.to_thread(self._list_upcoming, time_min, limit, user_credentials)
         except Exception as error:
-            logger.warning("Google Calendar list failed (%s)", type(error).__name__)
+            logger.exception("Google Calendar list failed: %s", error)
             raise CalendarIntegrationError(
                 "Google Calendar is temporarily unavailable"
-            ) from None
+            ) from error
 
     async def create_event(
         self,
@@ -89,19 +70,26 @@ class GoogleCalendarGateway:
         try:
             return await asyncio.to_thread(self._create_event, title, start, end, user_credentials)
         except Exception as error:
-            logger.warning("Google Calendar insert failed (%s)", type(error).__name__)
+            logger.exception("Google Calendar insert failed: %s", error)
             raise CalendarIntegrationError(
                 "Google Calendar is temporarily unavailable"
-            ) from None
+            ) from error
 
     async def delete_event(self, event_id: str, user_credentials: OAuthCredentials | None = None) -> None:
         try:
             await asyncio.to_thread(self._delete_event, event_id, user_credentials)
+        except EventNotFoundError:
+            raise
         except Exception as error:
-            logger.warning("Google Calendar delete failed (%s)", type(error).__name__)
+            logger.exception("Google Calendar delete failed: %s", error)
             raise CalendarIntegrationError(
                 "Google Calendar is temporarily unavailable"
-            ) from None
+            ) from error
+
+    def _get_calendar_id(self, user_credentials: OAuthCredentials | None = None) -> str:
+        if user_credentials is None:
+            raise ValueError("OAuth credentials are required to access Google Calendar")
+        return "primary"
 
     def _list_upcoming(
         self,
@@ -109,20 +97,19 @@ class GoogleCalendarGateway:
         limit: int,
         user_credentials: OAuthCredentials | None = None,
     ) -> list[CalendarEvent]:
-        with self._request_lock:
-            response = (
-                self._get_service(user_credentials)
-                .events()
-                .list(
-                    calendarId=self._calendar_id,
-                    timeMin=time_min.isoformat(),
-                    maxResults=limit,
-                    singleEvents=True,
-                    orderBy="startTime",
-                    timeZone=self._time_zone_name,
-                )
-                .execute()
+        response = (
+            self._get_service(user_credentials)
+            .events()
+            .list(
+                calendarId=self._get_calendar_id(user_credentials),
+                timeMin=time_min.isoformat(),
+                maxResults=limit,
+                singleEvents=True,
+                orderBy="startTime",
+                timeZone=self._time_zone_name,
             )
+            .execute()
+        )
 
         events: list[CalendarEvent] = []
         for item in response.get("items", []):
@@ -150,23 +137,31 @@ class GoogleCalendarGateway:
                 "timeZone": self._time_zone_name,
             },
         }
-        with self._request_lock:
-            result = (
-                self._get_service(user_credentials)
-                .events()
-                .insert(calendarId=self._calendar_id, body=body)
-                .execute()
-            )
+        result = (
+            self._get_service(user_credentials)
+            .events()
+            .insert(calendarId=self._get_calendar_id(user_credentials), body=body)
+            .execute()
+        )
         return self._from_google_event(result)
 
     def _delete_event(self, event_id: str, user_credentials: OAuthCredentials | None = None) -> None:
-        with self._request_lock:
+        try:
             (
                 self._get_service(user_credentials)
                 .events()
-                .delete(calendarId=self._calendar_id, eventId=event_id)
+                .delete(calendarId=self._get_calendar_id(user_credentials), eventId=event_id)
                 .execute()
             )
+        except HttpError as error:
+            # 410 Gone (Уже удалено) или 404 Not Found (Не найдено)
+            if error.resp.status in (404, 410):
+                logger.info(f"Событие {event_id} уже удалено из Google Календаря (статус {error.resp.status})")
+                raise EventNotFoundError(f"Событие не найдено в Google Календаре")
+            
+            # Если возникла другая ошибка (например, 401 Нет прав, 403 Лимит запросов), пробрасываем её дальше
+            logger.error(f"Ошибка при удалении события {event_id}: {error}")
+            raise
 
     def _from_google_event(self, item: dict[str, Any]) -> CalendarEvent:
         return CalendarEvent(

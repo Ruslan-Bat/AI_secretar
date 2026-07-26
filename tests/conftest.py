@@ -15,8 +15,6 @@ TEST_ENVIRONMENT = {
     "WEBHOOK_PATH": "/telegram/webhook",
     "WEBHOOK_SECRET": "",
     "GOOGLE_CALENDAR_ENABLED": "false",
-    "GOOGLE_SERVICE_ACCOUNT_FILE": "",
-    "GOOGLE_CALENDAR_ID": "",
     "GOOGLE_CALENDAR_TIMEZONE": "Europe/Moscow",
     "GOOGLE_CALENDAR_MAX_RESULTS": "10",
     "TESTING": "true",

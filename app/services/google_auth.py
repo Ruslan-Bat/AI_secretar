@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import jwt
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
@@ -15,6 +16,8 @@ from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarToke
 from app.domain.credentials import GoogleCredentials
 from app.integrations.google_auth import GoogleOAuthIntegration
 from app.repositories.user import CredentialsRepository
+
+logger = logging.getLogger(__name__)
 
 
 @runtime_checkable
@@ -41,11 +44,7 @@ class GoogleAuthService:
         self._settings = settings
         self._repository = credentials_repo
         self._integration: GoogleOAuthIntegrationProtocol = GoogleOAuthIntegration(settings=settings)
-        # Ensure we use a plain str for PyJWT and static type checkers (SecretStr is not acceptable)
-        if getattr(settings, "JWT_SECRET", None):
-            self._jwt_secret: str = settings.JWT_SECRET.get_secret_value()
-        else:
-            self._jwt_secret = "change-me-in-production"
+        self._jwt_secret: str = settings.JWT_SECRET.get_secret_value()
 
 
     def generate_state_token(self, telegram_id: int) -> str:
@@ -100,11 +99,11 @@ class GoogleAuthService:
         
         # Парсим время истечения токена, если оно есть
         expiry_str = tokens.get("expiry")
-        expires_at = (
-            datetime.fromisoformat(expiry_str)
-            if isinstance(expiry_str, str) and expiry_str
-            else None
-        )
+        expires_at = None
+        if isinstance(expiry_str, str) and expiry_str:
+            expires_at = datetime.fromisoformat(expiry_str)
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=timezone.utc)
         email = self._extract_email(tokens)
 
         # Формируем доменную модель
@@ -130,16 +129,21 @@ class GoogleAuthService:
         Преобразует доменную модель из БД в объект google.oauth2.credentials.Credentials,
         который нужен для GoogleCalendarGateway.
         """
-        tokens_dict = {
-            "access_token": db_creds.access_token,
-            "refresh_token": db_creds.refresh_token,
-            "token_uri": "https://oauth2.googleapis.com/token",
-            "client_id": self._settings.GOOGLE_CLIENT_ID,
-            "client_secret": self._settings.GOOGLE_CLIENT_SECRET,
-            "scopes": self._integration._scopes,
-            "expiry": db_creds.expires_at,
-        }
-        return self._integration.build_credentials(tokens_dict)
+        expiry = db_creds.expires_at
+        if expiry is not None:
+            if expiry.tzinfo is None:
+                expiry = expiry.replace(tzinfo=timezone.utc)
+            expiry = expiry.astimezone(timezone.utc).replace(tzinfo=None)
+
+        return Credentials(
+            token=db_creds.access_token,
+            refresh_token=db_creds.refresh_token,
+            client_id=self._settings.GOOGLE_CLIENT_ID,
+            client_secret=self._settings.GOOGLE_CLIENT_SECRET,
+            token_uri="https://oauth2.googleapis.com/token",
+            scopes=self._integration._scopes,
+            expiry=expiry,
+        )
 
     async def ensure_fresh_credentials(self, telegram_id: int) -> Credentials:
         """Возвращает OAuth-credentials пользователя, обновляя access token при необходимости."""
@@ -154,21 +158,24 @@ class GoogleAuthService:
             try:
                 self._integration.refresh_credentials(credentials)
             except Exception as error:
+                logger.error("Failed to refresh credentials for user %s", telegram_id, exc_info=True)
                 raise CalendarTokenRefreshError("Не удалось обновить токен") from error
 
             expiry = credentials.expiry
+            stored_expiry = None
             if expiry is not None:
-                if expiry.tzinfo is None:
-                    expiry = expiry.replace(tzinfo=timezone.utc)
-                else:
-                    expiry = expiry.astimezone(timezone.utc)
+               if expiry.tzinfo is None:
+                   expiry = expiry.replace(tzinfo=timezone.utc)
+               stored_expiry = expiry.astimezone(timezone.utc)
+               expiry = stored_expiry.replace(tzinfo=None)
+               credentials.expiry = expiry
 
             refreshed_creds = GoogleCredentials(
-                telegram_id=db_creds.telegram_id,
-                access_token=credentials.token or db_creds.access_token,
-                refresh_token=credentials.refresh_token or db_creds.refresh_token,
-                expires_at=expiry,
-                email=db_creds.email,
+               telegram_id=db_creds.telegram_id,
+               access_token=credentials.token or db_creds.access_token,
+               refresh_token=credentials.refresh_token or db_creds.refresh_token,
+               expires_at=stored_expiry,
+               email=db_creds.email,
             )
             await self._repository.upsert(refreshed_creds)
             return credentials

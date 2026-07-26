@@ -68,10 +68,27 @@ def make_settings(**overrides: Any) -> Settings:
         "WEBHOOK_PATH": "/telegram/webhook",
         "WEBHOOK_SECRET": None,
         "GOOGLE_CALENDAR_ENABLED": False,
+        "GOOGLE_CLIENT_ID": None,
+        "GOOGLE_CLIENT_SECRET": None,
+        "GOOGLE_REDIRECT_URI": None,
         "TESTING": False,
     }
     values.update(overrides)
     return Settings(_env_file=None, **values)
+
+
+def test_build_container_creates_calendar_service_when_oauth_configured() -> None:
+    settings = make_settings(
+        GOOGLE_CALENDAR_ENABLED=False,
+        GOOGLE_CLIENT_ID="some-client-id",
+        GOOGLE_CLIENT_SECRET="some-client-secret",
+        GOOGLE_REDIRECT_URI="http://localhost:8000/auth/google/callback",
+    )
+
+    container = build_container(settings=settings)
+
+    assert container.calendar_service is not None
+    assert container.auth_service is not None
 
 
 @pytest.mark.asyncio

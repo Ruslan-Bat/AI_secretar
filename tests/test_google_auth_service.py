@@ -7,6 +7,8 @@ from unittest.mock import AsyncMock
 from pydantic import SecretStr
 import pytest
 
+from google.oauth2.credentials import Credentials
+
 from app.config import Settings
 from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarTokenRefreshError
 from app.domain.credentials import GoogleCredentials
@@ -58,6 +60,14 @@ class FakeIntegration:
         self.refresh_called = True
         credentials.token = "refreshed-access-token"
         credentials.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        return credentials
+
+
+class FakeIntegrationWithMoscowExpiry(FakeIntegration):
+    def refresh_credentials(self, credentials: SimpleNamespace) -> SimpleNamespace:
+        self.refresh_called = True
+        credentials.token = "refreshed-access-token"
+        credentials.expiry = datetime.now(timezone(timedelta(hours=3))) + timedelta(hours=1)
         return credentials
 
 
@@ -135,6 +145,79 @@ async def test_ensure_fresh_credentials_raises_without_refresh_token() -> None:
 
 
 @pytest.mark.asyncio
+async def test_ensure_fresh_credentials_preserves_expiry_timezone_offset() -> None:
+    repository = FakeCredentialsRepository(
+        GoogleCredentials(
+            telegram_id=4,
+            access_token="expired-access-token",
+            refresh_token="refresh-token",
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            email="user@example.com",
+        )
+    )
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+    service._integration = FakeIntegrationWithMoscowExpiry()
+
+    await service.ensure_fresh_credentials(4)
+
+    assert repository.upserted is not None
+    assert repository.upserted.expires_at is not None
+    assert repository.upserted.expires_at.tzinfo == timezone.utc
+    assert repository.upserted.expires_at == repository.upserted.expires_at.astimezone(timezone.utc)
+
+
+class FakeIntegrationWithNaiveRefreshExpiry(FakeIntegration):
+    def refresh_credentials(self, credentials: SimpleNamespace) -> SimpleNamespace:
+        self.refresh_called = True
+        credentials.token = "refreshed-access-token"
+        credentials.expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        # Simulate Google returning a naive expiry datetime
+        credentials.expiry = credentials.expiry.replace(tzinfo=None)
+        return credentials
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_credentials_normalizes_naive_refreshed_expiry() -> None:
+    repository = FakeCredentialsRepository(
+        GoogleCredentials(
+            telegram_id=6,
+            access_token="expired-access-token",
+            refresh_token="refresh-token",
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            email="user@example.com",
+        )
+    )
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+    service._integration = FakeIntegrationWithNaiveRefreshExpiry()
+
+    credentials = await service.ensure_fresh_credentials(6)
+
+    assert credentials.expiry is not None
+    assert credentials.expiry.tzinfo is None
+    assert repository.upserted is not None
+    assert repository.upserted.expires_at is not None
+    assert repository.upserted.expires_at.tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_tokens_assumes_utc_for_naive_expiry() -> None:
+    class FakeIntegrationWithNaiveExpiry(FakeIntegration):
+        def exchange_code_for_tokens(self, code: str, state: str | None = None) -> dict[str, object]:
+            tokens = super().exchange_code_for_tokens(code, state)
+            tokens["expiry"] = (datetime.now(timezone.utc) + timedelta(hours=1)).replace(tzinfo=None).isoformat()
+            return tokens
+
+    repository = FakeCredentialsRepository(None)
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+    service._integration = FakeIntegrationWithNaiveExpiry()
+
+    credentials = await service.exchange_code_for_tokens("code", telegram_id=1, state=None)
+
+    assert credentials.expires_at is not None
+    assert credentials.expires_at.tzinfo == timezone.utc
+
+
+@pytest.mark.asyncio
 async def test_ensure_fresh_credentials_raises_when_no_credentials() -> None:
     repository = FakeCredentialsRepository(None)
     service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
@@ -142,3 +225,29 @@ async def test_ensure_fresh_credentials_raises_when_no_credentials() -> None:
 
     with pytest.raises(CalendarAuthRequiredError):
         await service.ensure_fresh_credentials(4)
+
+
+@pytest.mark.asyncio
+async def test_build_oauth_credentials_returns_google_credentials_object() -> None:
+    repository = FakeCredentialsRepository(
+        GoogleCredentials(
+            telegram_id=5,
+            access_token="test-access-token",
+            refresh_token="test-refresh-token",
+            expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+            email="user@example.com",
+        )
+    )
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+    credentials = service.build_oauth_credentials(repository._credentials)
+
+    assert isinstance(credentials, Credentials)
+    assert credentials.token == "test-access-token"
+    assert credentials.refresh_token == "test-refresh-token"
+    assert credentials.client_id == "test-client-id"
+    assert credentials.client_secret == "test-client-secret"
+    assert credentials.token_uri == "https://oauth2.googleapis.com/token"
+    assert credentials.scopes == service._integration._scopes
+    assert credentials.expiry is not None
+    assert credentials.expiry.tzinfo is None
+    assert credentials.expiry == repository._credentials.expires_at.astimezone(timezone.utc).replace(tzinfo=None)

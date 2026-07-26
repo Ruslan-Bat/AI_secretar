@@ -26,8 +26,6 @@ class Settings(BaseSettings):
     WEBHOOK_PATH: str = "/telegram/webhook"
     WEBHOOK_SECRET: SecretStr | None = None
     GOOGLE_CALENDAR_ENABLED: bool = False
-    GOOGLE_SERVICE_ACCOUNT_FILE: str | None = None
-    GOOGLE_CALENDAR_ID: str | None = None
     GOOGLE_CALENDAR_TIMEZONE: str = "Europe/Moscow"
     GOOGLE_CALENDAR_MAX_RESULTS: int = Field(default=10, ge=1, le=20)
     GOOGLE_CLIENT_ID: str | None = None
@@ -95,9 +93,9 @@ class Settings(BaseSettings):
             return None
         return value
 
-    @field_validator("GOOGLE_SERVICE_ACCOUNT_FILE", "GOOGLE_CALENDAR_ID", mode="before")
+    @field_validator("GOOGLE_CLIENT_ID", "GOOGLE_CLIENT_SECRET", "GOOGLE_REDIRECT_URI", mode="before")
     @classmethod
-    def empty_google_setting_is_none(cls, value: object) -> object:
+    def empty_google_oauth_setting_is_none(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip() or None
         return value
@@ -151,17 +149,17 @@ class Settings(BaseSettings):
                 "WEBHOOK_BASE_URL is required when BOT_MODE=webhook"
             )
         if self.GOOGLE_CALENDAR_ENABLED:
-            if not self.GOOGLE_SERVICE_ACCOUNT_FILE:
+            if not self.GOOGLE_CLIENT_ID:
                 raise ConfigurationError(
-                    "GOOGLE_SERVICE_ACCOUNT_FILE is required when Google Calendar is enabled"
+                    "GOOGLE_CLIENT_ID is required when Google Calendar is enabled"
                 )
-            if not self.GOOGLE_CALENDAR_ID:
+            if not self.GOOGLE_CLIENT_SECRET:
                 raise ConfigurationError(
-                    "GOOGLE_CALENDAR_ID is required when Google Calendar is enabled"
+                    "GOOGLE_CLIENT_SECRET is required when Google Calendar is enabled"
                 )
-            if not self.google_service_account_path().is_file():
+            if not self.GOOGLE_REDIRECT_URI:
                 raise ConfigurationError(
-                    "Google service account file does not exist or is not a file"
+                    "GOOGLE_REDIRECT_URI is required when Google Calendar is enabled"
                 )
 
     def telegram_token(self) -> str:
@@ -174,11 +172,6 @@ class Settings(BaseSettings):
             return None
         return self.WEBHOOK_SECRET.get_secret_value()
 
-    def google_service_account_path(self) -> Path:
-        if not self.GOOGLE_SERVICE_ACCOUNT_FILE:
-            raise ConfigurationError("Google service account file is not configured")
-        path = Path(self.GOOGLE_SERVICE_ACCOUNT_FILE).expanduser()
-        return path if path.is_absolute() else PROJECT_ROOT / path
 
     def database_url_asyncpg(self) -> str:
         user = quote_plus(self.DB_USER)

@@ -12,14 +12,14 @@ from app.core.calendar_exceptions import (
     CalendarInputError,
     CalendarIntegrationError,
     CalendarTokenRefreshError,
+    EventNotFoundError,
 )
 from app.domain.calendar_event import CalendarEvent
 from app.services.calendar import CalendarService
 
 
 NOT_CONFIGURED_MESSAGE = (
-    "Google Calendar пока не настроен. Включите интеграцию и заполните "
-    "GOOGLE_SERVICE_ACCOUNT_FILE и GOOGLE_CALENDAR_ID."
+    "Google Calendar пока не настроен. Включите интеграцию и пройдите /login."
 )
 UNAVAILABLE_MESSAGE = "Не удалось обратиться к Google Calendar. Попробуйте позже."
 
@@ -44,11 +44,20 @@ async def handle_calendar(
         await message.answer(NOT_CONFIGURED_MESSAGE)
         return
 
+    from_user = getattr(message, "from_user", None)
+    telegram_id = from_user.id if from_user is not None else None
+
     try:
-        events = await calendar_service.list_upcoming()
+       events = await calendar_service.list_upcoming(telegram_id=telegram_id)
+    except CalendarAuthRequiredError:
+       await message.answer("Нужно пройти /login")
+       return
+    except CalendarTokenRefreshError:
+       await message.answer("Не удалось обновить токен")
+       return
     except CalendarIntegrationError:
-        await message.answer(UNAVAILABLE_MESSAGE)
-        return
+       await message.answer(UNAVAILABLE_MESSAGE)
+       return
 
     if not events:
         await message.answer("Предстоящих событий не найдено.")
@@ -79,9 +88,9 @@ async def handle_add_event(
 
     try:
         if from_user is None:
-            event = await calendar_service.create_from_text(command.args)
-        else:
-            event = await calendar_service.create_from_text(command.args, from_user.id)
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        event = await calendar_service.create_from_text(command.args, from_user.id)
+
     except CalendarInputError as error:
         await message.answer(str(error))
         return
@@ -111,9 +120,9 @@ async def handle_delete_event(
 
     try:
         if from_user is None:
-            await calendar_service.delete_from_text(command.args)
-        else:
-            await calendar_service.delete_from_text(command.args, from_user.id)
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        await calendar_service.delete_from_text(command.args, from_user.id)
+
     except CalendarInputError as error:
         await message.answer(str(error))
         return
@@ -125,6 +134,9 @@ async def handle_delete_event(
         return
     except CalendarIntegrationError:
         await message.answer("Не удалось обратиться к Google Calendar")
+        return
+    except EventNotFoundError:
+        await message.answer("Не удалось найти событие с таким ID")
         return
 
     await message.answer("Событие удалено из Google Calendar.")

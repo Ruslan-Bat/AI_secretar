@@ -66,7 +66,7 @@ google_credentials_table = Table(
 def _ensure_aware_utc(value: datetime) -> datetime:
     if value.tzinfo is None:
         return value.replace(tzinfo=timezone.utc)
-    return value.astimezone(timezone.utc)
+    return value
 
 
 def _row_to_user(row: RowMapping) -> User:
@@ -91,12 +91,8 @@ def _row_to_credentials(row: RowMapping) -> GoogleCredentials:
 
 
 class SqlUserRepository:
-    def __init__(self, database_url: str) -> None:
-        self._engine: AsyncEngine = create_async_engine(database_url, echo=False)
-        self._session_factory = async_sessionmaker(
-            self._engine,
-            expire_on_commit=False,
-        )
+    def __init__(self, session_factory: async_sessionmaker) -> None:
+        self._session_factory = session_factory
 
     async def get_by_telegram_id(self, telegram_id: int) -> User | None:
         async with self._session_factory() as session:
@@ -145,12 +141,9 @@ class SqlUserRepository:
 class SqlCredentialsRepository:
     """Репозиторий для управления Google Credentials пользователей."""
 
-    def __init__(self, database_url: str | None = None, session_factory: async_sessionmaker | None = None) -> None:
+    def __init__(self, session_factory: async_sessionmaker) -> None:
         if session_factory:
             self._session_factory = session_factory
-        elif database_url:
-            engine = create_async_engine(database_url, echo=False)
-            self._session_factory = async_sessionmaker(engine, expire_on_commit=False)
         else:
             raise ValueError("Either database_url or session_factory must be provided")
 

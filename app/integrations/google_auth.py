@@ -11,6 +11,9 @@ from google_auth_oauthlib.flow import Flow
 
 from app.config import Settings
 
+# Указываем oauthlib игнорировать изменение скоупов (добавление openid от Google)
+os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+
 
 class GoogleOAuthIntegration:
     """Оборачивает Google OAuth 2.0 для локальной разработки."""
@@ -46,6 +49,7 @@ class GoogleOAuthIntegration:
             access_type="offline",
             include_granted_scopes="true",
             state=state,
+            prompt="consent",  # Запрашиваем refresh token каждый раз
         )
         
         # Принудительно вырезаем PKCE-параметры из ссылки
@@ -62,8 +66,7 @@ class GoogleOAuthIntegration:
         return clean_auth_url
 
     def exchange_code_for_tokens(self, code: str, state: str | None = None) -> dict[str, Any]:
-    # Указываем oauthlib игнорировать изменение скоупов (добавление openid от Google)
-        os.environ['OAUTHLIB_RELAX_TOKEN_SCOPE'] = '1'
+    
 
         flow = Flow.from_client_config(
             {
@@ -98,7 +101,7 @@ class GoogleOAuthIntegration:
             refresh_token=tokens.get("refresh_token"),
             client_id=tokens.get("client_id"),
             client_secret=tokens.get("client_secret"),
-            token_uri=tokens.get("token_uri"),
+            token_uri=tokens.get("token_uri") or "https://oauth2.googleapis.com/token",
             scopes=tokens.get("scopes"),
             expiry=tokens.get("expiry"),
         )

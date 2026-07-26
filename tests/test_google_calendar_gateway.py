@@ -1,5 +1,4 @@
 from datetime import date, datetime
-from pathlib import Path
 from typing import Any
 
 import pytest
@@ -70,12 +69,8 @@ class FakeGoogleService:
 
 def make_gateway() -> tuple[GoogleCalendarGateway, FakeEventsResource]:
     events = FakeEventsResource()
-    gateway = GoogleCalendarGateway(
-        credentials_file=Path("unused-service-account.json"),
-        calendar_id="calendar@example.com",
-        time_zone="Europe/Moscow",
-    )
-    gateway._service = FakeGoogleService(events)  # type: ignore[assignment]
+    gateway = GoogleCalendarGateway(time_zone="Europe/Moscow")
+    gateway._get_service = lambda user_credentials=None: FakeGoogleService(events)  # type: ignore[assignment]
     return gateway, events
 
 
@@ -86,13 +81,14 @@ async def test_maps_google_events_without_network() -> None:
     events = await gateway.list_upcoming(
         time_min=datetime.fromisoformat("2026-07-19T10:00:00+00:00"),
         limit=10,
+        user_credentials="credentials",
     )
 
     assert [event.event_id for event in events] == ["timed-id", "all-day-id"]
     assert isinstance(events[0].start, datetime)
     assert events[1].start == date(2026, 7, 21)
     assert events_resource.list_arguments == {
-        "calendarId": "calendar@example.com",
+        "calendarId": "primary",
         "timeMin": "2026-07-19T10:00:00+00:00",
         "maxResults": 10,
         "singleEvents": True,
@@ -107,12 +103,12 @@ async def test_creates_and_deletes_google_event_without_network() -> None:
     start = datetime.fromisoformat("2026-07-20T14:30:00+03:00")
     end = datetime.fromisoformat("2026-07-20T15:30:00+03:00")
 
-    created = await gateway.create_event(title="Встреча", start=start, end=end)
-    await gateway.delete_event(created.event_id)
+    created = await gateway.create_event(title="Встреча", start=start, end=end, user_credentials="credentials")
+    await gateway.delete_event(created.event_id, user_credentials="credentials")
 
     assert created.event_id == "created-id"
     assert events_resource.insert_arguments == {
-        "calendarId": "calendar@example.com",
+        "calendarId": "primary",
         "body": {
             "summary": "Встреча",
             "start": {
@@ -126,6 +122,6 @@ async def test_creates_and_deletes_google_event_without_network() -> None:
         },
     }
     assert events_resource.delete_arguments == {
-        "calendarId": "calendar@example.com",
+        "calendarId": "primary",
         "eventId": "created-id",
     }

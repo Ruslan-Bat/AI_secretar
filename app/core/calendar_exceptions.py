@@ -19,3 +19,7 @@ class CalendarAuthRequiredError(CalendarError):
 
 class CalendarTokenRefreshError(CalendarError):
     """Возникает, если не удалось обновить access token пользователя."""
+
+class EventNotFoundError(CalendarError):
+    """Вызывается, если событие с указанным ID не найдено."""
+    

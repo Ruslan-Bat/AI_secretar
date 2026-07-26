@@ -2,6 +2,9 @@
 
 from dataclasses import dataclass
 
+from fastapi import Request
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
 from app.config import Settings
 from app.integrations.calendar import CalendarGateway
 from app.integrations.google_calendar import GoogleCalendarGateway
@@ -28,26 +31,38 @@ def build_container(
     calendar_gateway: CalendarGateway | None = None,
 ) -> AppContainer:
 
+    settings = settings if settings is not None else Settings()
+
+    #Инициализируем БД: Единый движок и пул соединений на всё приложение
+    session_factory = None
+    if settings.USER_REPOSITORY == "postgres":
+        engine = create_async_engine(settings.database_url_asyncpg(), echo=False)
+        session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
     if user_repository is not None:
         repository = user_repository
-    elif settings is not None and settings.USER_REPOSITORY == "postgres":
-        repository = SqlUserRepository(settings.database_url_asyncpg())
+    elif session_factory:
+        repository = SqlUserRepository(session_factory=session_factory)
     else:
         repository = MemoryUserRepository()
         
     gateway = calendar_gateway
     # Клиент Google создаётся лениво и не читает учётные данные при импорте.
-    if gateway is None and settings is not None and settings.GOOGLE_CALENDAR_ENABLED:
-        gateway = GoogleCalendarGateway(
-            credentials_file=settings.google_service_account_path(),
-            calendar_id=settings.GOOGLE_CALENDAR_ID or "",
-            time_zone=settings.GOOGLE_CALENDAR_TIMEZONE,
+    if gateway is None and settings is not None:
+        has_oauth_config = (
+            bool(settings.GOOGLE_CLIENT_ID)
+            and bool(settings.GOOGLE_CLIENT_SECRET)
+            and bool(settings.GOOGLE_REDIRECT_URI)
         )
+        if settings.GOOGLE_CALENDAR_ENABLED or has_oauth_config:
+            gateway = GoogleCalendarGateway(
+                time_zone=settings.GOOGLE_CALENDAR_TIMEZONE,
+            )
 
     # Инициализация auth_service
     auth_service = None
-    if settings is not None:
-        auth_service = get_google_auth_service(settings)
+    if session_factory is not None:
+        auth_service = build_google_auth_service(settings, session_factory)
 
     calendar_service = None
     if gateway is not None:
@@ -69,16 +84,30 @@ def build_container(
         user_service=UserService(repository),
         calendar_gateway=gateway,
         calendar_service=calendar_service,
-        auth_service=auth_service,  # Прокидываем в контейнер
+        auth_service=auth_service,
     )
 
 
-def get_google_auth_service(settings: Settings | None = None) -> GoogleAuthService:
-    resolved_settings = settings if settings is not None else Settings()
+def build_google_auth_service(
+    settings: Settings,
+    session_factory: async_sessionmaker
+) -> GoogleAuthService:
+    """Создает сервис авторизации, используя общий пул соединений."""
+    
+    # Репозиторий теперь получает готовую фабрику, а не плодит новые пулы
     credentials_repository = SqlCredentialsRepository(
-        database_url=resolved_settings.database_url_asyncpg()
+        session_factory=session_factory
     )
+
     return GoogleAuthService(
-        settings=resolved_settings,
+        settings=settings,
         credentials_repo=credentials_repository,
     )
+
+
+def get_google_auth_service(request: Request) -> GoogleAuthService:
+    """Возвращает сервис авторизации из контейнера приложения."""
+    container = request.app.state.container
+    if container.auth_service is None:
+        raise RuntimeError("Google auth service is not configured")
+    return container.auth_service
