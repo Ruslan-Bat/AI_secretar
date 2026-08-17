@@ -31,6 +31,7 @@ class Settings(BaseSettings):
     GOOGLE_CLIENT_ID: str | None = None
     GOOGLE_CLIENT_SECRET: str | None = None
     GOOGLE_REDIRECT_URI: str | None = None
+    DEEPSEEK_API_KEY: SecretStr | None = None
     USER_REPOSITORY: Literal["memory", "postgres"] = "memory"
     DB_HOST: str = "127.0.0.1"
     DB_PORT: int = Field(default=5432, ge=1, le=65535)
@@ -98,6 +99,13 @@ class Settings(BaseSettings):
     def empty_google_oauth_setting_is_none(cls, value: object) -> object:
         if isinstance(value, str):
             return value.strip() or None
+        return value
+
+    @field_validator("DEEPSEEK_API_KEY", mode="before")
+    @classmethod
+    def empty_deepseek_key_is_none(cls, value: object) -> object:
+        if isinstance(value, str) and not value.strip():
+            return None
         return value
 
     @field_validator("DB_HOST", "DB_USER", "DB_PASS", "DB_NAME", mode="before")

@@ -1,3 +1,4 @@
+from app.bot.handlers.ai_assistant import create_router as create_ai_assistant_router
 from app.bot.handlers.calendar import create_router as create_calendar_router
 from app.bot.handlers.help import create_router as create_help_router
 from app.bot.handlers.login import create_router as create_login_router
@@ -5,6 +6,7 @@ from app.bot.handlers.ping import create_router as create_ping_router
 from app.bot.handlers.start import create_router as create_start_router
 
 __all__ = [
+    "create_ai_assistant_router",
     "create_calendar_router",
     "create_help_router",
     "create_login_router",

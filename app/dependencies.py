@@ -7,10 +7,13 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from app.config import Settings
 from app.integrations.calendar import CalendarGateway
+from app.integrations.deepseek import DeepSeekClient
 from app.integrations.google_calendar import GoogleCalendarGateway
 from app.repositories.memory_user import MemoryUserRepository
 from app.repositories.sql_user import SqlCredentialsRepository, SqlUserRepository
 from app.repositories.user import UserRepository
+from app.services.ai.agent import AIAgent
+from app.services.ai.executor import ToolExecutor
 from app.services.calendar import CalendarService
 from app.services.google_auth import GoogleAuthService
 from app.services.user import UserService
@@ -23,6 +26,7 @@ class AppContainer:
     calendar_gateway: CalendarGateway | None
     calendar_service: CalendarService | None
     auth_service: GoogleAuthService | None  # Добавлено поле для сервиса авторизации
+    ai_agent: AIAgent | None
 
 
 def build_container(
@@ -79,12 +83,24 @@ def build_container(
             auth_service=auth_service,
         )
 
+    ai_agent = None
+    if calendar_service is not None and settings.DEEPSEEK_API_KEY is not None:
+        deepseek_client = DeepSeekClient(
+            api_key=settings.DEEPSEEK_API_KEY.get_secret_value(),
+        )
+        tool_executor = ToolExecutor(calendar_service)
+        ai_agent = AIAgent(
+            deepseek_client=deepseek_client,
+            tool_executor=tool_executor,
+        )
+
     return AppContainer(
         user_repository=repository,
         user_service=UserService(repository),
         calendar_gateway=gateway,
         calendar_service=calendar_service,
         auth_service=auth_service,
+        ai_agent=ai_agent,
     )
 
 

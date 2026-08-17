@@ -44,6 +44,7 @@ async def start_bot_runtime(
         container.user_service,
         container.calendar_service,
         container.auth_service,
+        container.ai_agent,
     )
     runtime = BotRuntime(bot=bot, dispatcher=dispatcher)
 

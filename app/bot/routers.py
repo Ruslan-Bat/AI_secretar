@@ -6,6 +6,7 @@ from aiogram import Router
 from aiogram.types import ErrorEvent
 
 from app.bot.handlers import (
+    create_ai_assistant_router,
     create_calendar_router,
     create_help_router,
     create_login_router,
@@ -42,5 +43,6 @@ def create_root_router() -> Router:
     router.include_router(create_ping_router())
     router.include_router(create_calendar_router())
     router.include_router(create_login_router())
+    router.include_router(create_ai_assistant_router())
     router.errors.register(handle_unexpected_error)
     return router
