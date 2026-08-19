@@ -8,6 +8,8 @@ from typing import Any
 
 from pydantic import ValidationError
 
+from app.core.ai_exceptions import ToolArgumentError
+
 from app.domain.ai import CreateEventInput
 from app.integrations.deepseek import DeepSeekClient
 from app.services.ai.executor import ToolExecutor
@@ -15,6 +17,13 @@ from app.services.ai.prompts import get_system_prompt
 
 
 logger = logging.getLogger(__name__)
+
+
+def _format_validation_feedback(error: ToolArgumentError) -> str:
+    return (
+        f"Ошибка валидации аргументов инструмента '{error.tool_name}': "
+        f"{error.original.errors()!r}. Исправь формат и повтори вызов."
+    )
 
 
 class AIAgent:
@@ -72,11 +81,8 @@ class AIAgent:
 
                 try:
                     tool_result = await self._tool_executor.execute(tool_name, parsed_arguments, user_id)
-                except ValidationError as error:
-                    tool_result = (
-                        f"Ошибка валидации аргументов: {error}. "
-                        "Исправь формат и повтори вызов."
-                    )
+                except ToolArgumentError  as error:
+                    tool_result = _format_validation_feedback(error)
 
             messages.append(
                 {
@@ -95,7 +101,7 @@ class AIAgent:
 
         content = final_response.choices[0].message.content or ""
         return content.strip() or "Готово."
-
+    
     def _create_event_tool_schema(self) -> dict[str, Any]:
         return {
             "type": "function",
@@ -104,7 +110,9 @@ class AIAgent:
                 "description": "Создает событие в Google Calendar пользователя.",
                 "parameters": CreateEventInput.model_json_schema(),
             },
-        }
+        }    
+    
+   
 
     @staticmethod
     def _tool_call_to_message(tool_call: Any) -> dict[str, Any]:
@@ -116,3 +124,4 @@ class AIAgent:
                 "arguments": tool_call.function.arguments,
             },
         }
+

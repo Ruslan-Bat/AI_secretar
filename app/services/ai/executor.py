@@ -1,5 +1,8 @@
 """Слой исполнения инструментов AI-ассистента."""
 
+from pydantic import ValidationError
+
+from app.core.ai_exceptions import ToolArgumentError
 from app.core.calendar_exceptions import (
     CalendarAuthRequiredError,
     CalendarInputError,
@@ -11,7 +14,14 @@ from app.services.calendar import CalendarService
 
 
 class ToolExecutor:
-    """Выполняет операции, вызываемые через tool calling."""
+    """Выполняет операции, вызываемые через tool calling.
+
+    Контракт execute():
+    - Успех (включая ожидаемые бизнес-ошибки вроде "нужна авторизация")
+      -> возвращает str с текстом для модели.
+    - Невалидные аргументы от модели -> бросает ToolArgumentError.
+    Вызывающий код обязан ловить ToolArgumentError отдельно.
+    """
 
     def __init__(self, calendar_service: CalendarService) -> None:
         self._calendar_service = calendar_service
@@ -20,7 +30,10 @@ class ToolExecutor:
         if tool_name != "create_event":
             return f"Неизвестный инструмент: {tool_name}"
 
-        payload = CreateEventInput(**arguments)
+        try:
+            payload = CreateEventInput(**arguments)
+        except ValidationError as error:
+            raise ToolArgumentError(tool_name, error) from error
 
         command_args = (
             f"{payload.start_date.isoformat()} "
