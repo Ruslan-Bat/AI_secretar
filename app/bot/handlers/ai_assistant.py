@@ -1,10 +1,16 @@
 """Свободный текстовый хендлер для AI-ассистента календаря."""
 
+import logging
+
 from aiogram import F, Router
 from aiogram.types import Message
 from aiogram.utils.chat_action import ChatActionSender
 
 from app.services.ai.agent import AIAgent
+
+from app.core.ai_exceptions import AIAssistantError
+
+logger = logging.getLogger(__name__)
 
 
 router = Router(name="ai-assistant")
@@ -34,8 +40,22 @@ async def ai_assistant_handler(
         await message.answer("Внутренняя ошибка Telegram-сессии. Попробуйте позже.")
         return
 
-    async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
-        response = await ai_agent.process_message(user.id, text)
+    try:
+        async with ChatActionSender.typing(bot=bot, chat_id=message.chat.id):
+            response = await ai_agent.process_message(user.id, text)
+    except AIAssistantError:
+        logger.exception("AI assistant error for user_id=%s", user.id)
+        await message.answer(
+            "Не удалось обработать запрос ИИ-ассистентом. Попробуйте переформулировать предложение или повторить позже."
+        )
+        return
+    except Exception:
+        logger.exception("Unexpected error in AI assistant for user_id=%s", user.id)
+        await message.answer(
+            "Произошла непредвиденная ошибка при обработке запроса. Попробуйте позже."
+        )
+        return
+
     await message.answer(response)
 
 

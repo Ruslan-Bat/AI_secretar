@@ -2,7 +2,7 @@
 
 from pydantic import ValidationError
 
-from app.core.ai_exceptions import ToolArgumentError
+from app.core.ai_exceptions import ToolArgumentError, UnknownToolError
 from app.core.calendar_exceptions import (
     CalendarAuthRequiredError,
     CalendarInputError,
@@ -28,7 +28,7 @@ class ToolExecutor:
 
     async def execute(self, tool_name: str, arguments: dict, user_id: int) -> str:
         if tool_name != "create_event":
-            return f"Неизвестный инструмент: {tool_name}"
+            raise UnknownToolError(tool_name)
 
         try:
             payload = CreateEventInput(**arguments)

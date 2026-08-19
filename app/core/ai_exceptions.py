@@ -30,3 +30,17 @@ class ToolArgumentError(ToolExecutionError):
         self.tool_name = tool_name
         self.original = original
         super().__init__(f"Невалидные аргументы для '{tool_name}': {original}")
+
+
+class UnknownToolError(ToolExecutionError):
+    """Модель запросила инструмент, которого нет в ToolExecutor.
+
+    Обычно это не ошибка пользователя или модели, а рассинхрон между
+    схемой инструментов, объявленной в AIAgent (какие tools переданы
+    в DeepSeek), и фактическими обработчиками в ToolExecutor. Стоит
+    логировать как программную ошибку, а не просто показывать текст.
+    """
+
+    def __init__(self, tool_name: str) -> None:
+        self.tool_name = tool_name
+        super().__init__(f"Неизвестный инструмент: {tool_name}")

@@ -8,7 +8,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
-from app.core.ai_exceptions import ToolArgumentError
+from app.core.ai_exceptions import ToolArgumentError, UnknownToolError
 
 from app.domain.ai import CreateEventInput
 from app.integrations.deepseek import DeepSeekClient
@@ -83,6 +83,12 @@ class AIAgent:
                     tool_result = await self._tool_executor.execute(tool_name, parsed_arguments, user_id)
                 except ToolArgumentError  as error:
                     tool_result = _format_validation_feedback(error)
+                except UnknownToolError as error:
+                    logger.warning("Model requested unknown tool: %s (user_id=%s)", error.tool_name, user_id)
+                    tool_result = (
+                        f"Инструмент '{error.tool_name}' не существует. "
+                        "Проверь название и существует ли оно вообще, а затем вызови снова."
+                    )
 
             messages.append(
                 {
