@@ -16,22 +16,19 @@ class ToolExecutor:
     def __init__(self, calendar_service: CalendarService) -> None:
         self._calendar_service = calendar_service
 
-    async def execute(self, tool_name: str, arguments: dict) -> str:
+    async def execute(self, tool_name: str, arguments: dict, user_id: int) -> str:
         if tool_name != "create_event":
             return f"Неизвестный инструмент: {tool_name}"
 
         payload = CreateEventInput(**arguments)
 
-        telegram_id = arguments.get("_user_id")
-        if not isinstance(telegram_id, int):
-            return "Ошибка: не удалось определить пользователя для создания события."
-
         command_args = (
-            f"{payload.date} {payload.start_time} "
+            f"{payload.start_date.isoformat()} "
+            f"{payload.start_time.strftime('%H:%M')} "
             f"{payload.duration_minutes} {payload.title}"
         )
         try:
-            event = await self._calendar_service.create_from_text(command_args, telegram_id)
+            event = await self._calendar_service.create_from_text(command_args, user_id)
         except CalendarInputError as error:
             return f"Ошибка ввода: {error}"
         except CalendarAuthRequiredError:
@@ -41,4 +38,4 @@ class ToolExecutor:
         except CalendarIntegrationError:
             return "Google Calendar временно недоступен. Предложи попробовать позже."
 
-        return f"Событие успешно создано на {payload.date}. ID: {event.event_id}"
+        return f"Событие успешно создано на {payload.start_date.isoformat()}. ID: {event.event_id}"

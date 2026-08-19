@@ -42,6 +42,9 @@ class AIAgent:
             return "Не удалось обратиться к ИИ-ассистенту. Попробуйте позже."
 
         assistant_message = response.choices[0].message
+        print("---------------------------------")
+        print(assistant_message)
+        print("---------------------------------")
         tool_calls = getattr(assistant_message, "tool_calls", None) or []
         if not tool_calls:
             return (assistant_message.content or "").strip() or "Не удалось сформировать ответ."
@@ -66,10 +69,9 @@ class AIAgent:
             else:
                 if not isinstance(parsed_arguments, dict):
                     parsed_arguments = {}
-                parsed_arguments["_user_id"] = user_id
 
                 try:
-                    tool_result = await self._tool_executor.execute(tool_name, parsed_arguments)
+                    tool_result = await self._tool_executor.execute(tool_name, parsed_arguments, user_id)
                 except ValidationError as error:
                     tool_result = (
                         f"Ошибка валидации аргументов: {error}. "
