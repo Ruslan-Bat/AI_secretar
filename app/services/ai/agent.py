@@ -51,9 +51,9 @@ class AIAgent:
             return "Не удалось обратиться к ИИ-ассистенту. Попробуйте позже."
 
         assistant_message = response.choices[0].message
-        print("---------------------------------")
-        print(assistant_message)
-        print("---------------------------------")
+
+        logger.debug("Assistant message: %r", assistant_message)
+        
         tool_calls = getattr(assistant_message, "tool_calls", None) or []
         if not tool_calls:
             return (assistant_message.content or "").strip() or "Не удалось сформировать ответ."
