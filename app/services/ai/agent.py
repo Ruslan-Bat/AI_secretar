@@ -6,8 +6,6 @@ import json
 import logging
 from typing import Any
 
-from pydantic import ValidationError
-
 from app.core.ai_exceptions import ToolArgumentError, UnknownToolError
 
 from app.domain.ai import CreateEventInput
@@ -17,6 +15,8 @@ from app.services.ai.prompts import get_system_prompt
 
 
 logger = logging.getLogger(__name__)
+
+_MAX_AGENT_ITERATIONS: int = 3
 
 
 def _format_validation_feedback(error: ToolArgumentError) -> str:
@@ -44,69 +44,74 @@ class AIAgent:
         ]
         tools = [self._create_event_tool_schema()]
 
-        try:
-            response = await self._deepseek_client.chat_completion(messages=messages, tools=tools)
-        except Exception as error:
-            logger.exception("DeepSeek request failed: %s", error)
-            return "Не удалось обратиться к ИИ-ассистенту. Попробуйте позже."
+        #Agent loop: модель может вызывать инструменты несколько раз, пока не сформирует финальный ответ.
+        for iteration in range(1, _MAX_AGENT_ITERATIONS + 1):
 
-        assistant_message = response.choices[0].message
-
-        logger.debug("Assistant message: %r", assistant_message)
-        
-        tool_calls = getattr(assistant_message, "tool_calls", None) or []
-        if not tool_calls:
-            return (assistant_message.content or "").strip() or "Не удалось сформировать ответ."
-
-        messages.append(
-            {
-                "role": "assistant",
-                "content": assistant_message.content or "",
-                "tool_calls": [self._tool_call_to_message(tc) for tc in tool_calls],
-            }
-        )
-
-        # Agent loop: ассистент запросил инструмент -> выполняем -> возвращаем результат
-        # обратно модели, чтобы она сформировала финальный ответ пользователю.
-        for tool_call in tool_calls:
-            tool_name = tool_call.function.name
-            raw_arguments = tool_call.function.arguments or "{}"
             try:
-                parsed_arguments = json.loads(raw_arguments)
-            except json.JSONDecodeError as error:
-                tool_result = f"Ошибка в аргументах инструмента: невалидный JSON ({error})."
-            else:
-                if not isinstance(parsed_arguments, dict):
-                    parsed_arguments = {}
+                response = await self._deepseek_client.chat_completion(messages=messages, tools=tools)
+            except Exception as error:
+                logger.exception("DeepSeek request failed (iteration=%s): %s", iteration, error)
+                return "Не удалось обратиться к ИИ-ассистенту. Попробуйте позже."
 
-                try:
-                    tool_result = await self._tool_executor.execute(tool_name, parsed_arguments, user_id)
-                except ToolArgumentError  as error:
-                    tool_result = _format_validation_feedback(error)
-                except UnknownToolError as error:
-                    logger.warning("Model requested unknown tool: %s (user_id=%s)", error.tool_name, user_id)
-                    tool_result = (
-                        f"Инструмент '{error.tool_name}' не существует. "
-                        "Проверь название и существует ли оно вообще, а затем вызови снова."
-                    )
+            assistant_message = response.choices[0].message
+            logger.debug("Assistant message (iteration=%s): %r", iteration, assistant_message)
+
+            tool_calls = getattr(assistant_message, "tool_calls", None) or []
+            if not tool_calls:
+                content = (assistant_message.content or "").strip()
+                return content or "Не удалось сформировать ответ."
 
             messages.append(
                 {
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "name": tool_name,
-                    "content": tool_result,
+                    "role": "assistant",
+                    "content": assistant_message.content or "",
+                    "tool_calls": [self._tool_call_to_message(tc) for tc in tool_calls],
                 }
             )
 
-        try:
-            final_response = await self._deepseek_client.chat_completion(messages=messages, tools=tools)
-        except Exception as error:
-            logger.exception("DeepSeek follow-up request failed: %s", error)
-            return messages[-1]["content"]
 
-        content = final_response.choices[0].message.content or ""
-        return content.strip() or "Готово."
+            for tool_call in tool_calls:
+                tool_name = tool_call.function.name
+                raw_arguments = tool_call.function.arguments or "{}"
+                try:
+                    parsed_arguments = json.loads(raw_arguments)
+                except json.JSONDecodeError as error:
+                    tool_result = f"Ошибка в аргументах инструмента: невалидный JSON ({error})."
+                else:
+                    if not isinstance(parsed_arguments, dict):
+                        parsed_arguments = {}
+
+                    try:
+                        tool_result = await self._tool_executor.execute(tool_name, parsed_arguments, user_id)
+                    except ToolArgumentError  as error:
+                        tool_result = _format_validation_feedback(error)
+                    except UnknownToolError as error:
+                        logger.warning("Model requested unknown tool: %s (user_id=%s)", error.tool_name, user_id)
+                        tool_result = (
+                            f"Инструмент '{error.tool_name}' не существует. "
+                            "Проверь название, а затем вызови снова."
+                        )
+
+                messages.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "name": tool_name,
+                        "content": tool_result,
+                    }
+                )
+
+        logger.warning(
+            "Agent loop exceeded max iterations (%s) for user_id=%s",
+            _MAX_AGENT_ITERATIONS,
+            user_id,
+        )
+
+        return (
+            "Не удалось завершить обработку запроса за отведённое число шагов. "
+            "Если вы просили создать событие — проверьте календарь: "
+            "оно могло быть создано, даже если ответ не пришёл."
+        )
     
     def _create_event_tool_schema(self) -> dict[str, Any]:
         return {
