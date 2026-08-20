@@ -91,6 +91,18 @@ class AIAgent:
                             f"Инструмент '{error.tool_name}' не существует. "
                             "Проверь название, а затем вызови снова."
                         )
+                    except Exception as error:
+                        logger.exception(
+                            "Unexpected error executing tool '%s' (user_id=%s): %s",
+                            tool_name,
+                            user_id,
+                            error,
+                        )
+                        tool_result = (
+                            f"Внутренняя ошибка при выполнении инструмента '{tool_name}'. "
+                            "Не пытайся вызывать его снова в этом же ответе — сообщи "
+                            "пользователю, что операция не выполнена, и предложи попробовать позже."
+                        )
 
                 messages.append(
                     {
