@@ -4,14 +4,16 @@ from typing import Any, cast
 
 from openai import AsyncOpenAI
 
+_DEFAULT_TIMEOUT_SECONDS: float = 30.0
 
 class DeepSeekClient:
     """Обертка над AsyncOpenAI для запросов к DeepSeek."""
 
-    def __init__(self, api_key: str) -> None:
+    def __init__(self, api_key: str, timeout: float = _DEFAULT_TIMEOUT_SECONDS) -> None:
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url="https://api.deepseek.com",
+            timeout=timeout,
         )
 
     async def chat_completion(
