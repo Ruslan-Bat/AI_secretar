@@ -13,3 +13,4 @@ class GoogleCredentials:
     refresh_token: str | None = None
     expires_at: datetime | None = None
     email: str | None = None
+    time_zone: str | None = None

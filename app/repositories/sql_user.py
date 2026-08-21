@@ -49,6 +49,7 @@ google_credentials_table = Table(
     Column("access_token", String, nullable=False),
     Column("refresh_token", String, nullable=True),
     Column("expires_at", DateTime(timezone=True), nullable=True),
+    Column("time_zone", String(64), nullable=True),
     Column(
         "created_at",
         DateTime(timezone=True),
@@ -87,6 +88,7 @@ def _row_to_credentials(row: RowMapping) -> GoogleCredentials:
         access_token=row["access_token"],
         refresh_token=row["refresh_token"],
         expires_at=_ensure_aware_utc(row["expires_at"]) if row["expires_at"] else None,
+        time_zone=row["time_zone"],
     )
 
 
@@ -170,6 +172,8 @@ class SqlCredentialsRepository:
                 update_values["email"] = credentials.email
             if credentials.refresh_token is not None:
                 update_values["refresh_token"] = credentials.refresh_token
+            if credentials.time_zone is not None:
+                update_values["time_zone"] = credentials.time_zone
 
             statement = (
                 pg_insert(google_credentials_table)
@@ -179,6 +183,7 @@ class SqlCredentialsRepository:
                     access_token=credentials.access_token,
                     refresh_token=credentials.refresh_token,
                     expires_at=credentials.expires_at,
+                    time_zone=credentials.time_zone,
                 )
                 .on_conflict_do_update(
                     index_elements=[google_credentials_table.c.telegram_id],
