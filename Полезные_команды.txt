@@ -10,3 +10,5 @@ docker exec -it tg_assistent-db-1 psql -U postgres
 \dt 
 
 
+Накатка миграции (в корне проекта):
+alembic revision --autogenerate -m "name_your_migration"
