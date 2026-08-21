@@ -31,3 +31,7 @@ class CalendarGateway(Protocol):
         
     async def delete_event(self, event_id: str, user_credentials: Any | None = None) -> None:
         """Удаляет событие по идентификатору Google Calendar."""
+
+    async def get_primary_calendar_timezone(self, user_credentials: Any | None = None) -> str:
+        """Возвращает IANA-имя часового пояса основного календаря пользователя."""
+        ...

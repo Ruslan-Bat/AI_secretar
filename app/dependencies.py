@@ -66,7 +66,7 @@ def build_container(
     # Инициализация auth_service
     auth_service = None
     if session_factory is not None:
-        auth_service = build_google_auth_service(settings, session_factory)
+        auth_service = build_google_auth_service(settings, session_factory, calendar_gateway=gateway)
 
     calendar_service = None
     if gateway is not None:
@@ -106,7 +106,8 @@ def build_container(
 
 def build_google_auth_service(
     settings: Settings,
-    session_factory: async_sessionmaker
+    session_factory: async_sessionmaker,
+    calendar_gateway: CalendarGateway | None,
 ) -> GoogleAuthService:
     """Создает сервис авторизации, используя общий пул соединений."""
     
@@ -118,6 +119,7 @@ def build_google_auth_service(
     return GoogleAuthService(
         settings=settings,
         credentials_repo=credentials_repository,
+        calendar_gateway=calendar_gateway,
     )
 
 

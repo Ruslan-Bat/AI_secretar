@@ -86,6 +86,27 @@ class GoogleCalendarGateway:
                 "Google Calendar is temporarily unavailable"
             ) from error
 
+    async def get_primary_calendar_timezone(self, user_credentials: OAuthCredentials | None = None) -> str:
+        try:
+            return await asyncio.to_thread(self._get_primary_calendar_timezone, user_credentials)
+        except Exception as error:
+            logger.exception("Google Calendar timezone fetch failed: %s", error)
+            raise CalendarIntegrationError(
+                "Google Calendar is temporarily unavailable"
+            ) from error
+
+    def _get_primary_calendar_timezone(self, user_credentials: OAuthCredentials | None = None) -> str:
+        result = (
+            self._get_service(user_credentials)
+            .calendars()
+            .get(calendarId=self._get_calendar_id(user_credentials))
+            .execute()
+        )
+        time_zone = result.get("timeZone")
+        if not time_zone:
+            raise ValueError("Google Calendar response has no timeZone field")
+        return time_zone
+
     def _get_calendar_id(self, user_credentials: OAuthCredentials | None = None) -> str:
         if user_credentials is None:
             raise ValueError("OAuth credentials are required to access Google Calendar")

@@ -25,6 +25,7 @@ class GoogleOAuthIntegration:
         self._redirect_uri = settings.GOOGLE_REDIRECT_URI or "http://localhost:8000/auth/google/callback"
         self._scopes = [
             "https://www.googleapis.com/auth/calendar.events",
+            "https://www.googleapis.com/auth/calendar.calendars.readonly",
             "https://www.googleapis.com/auth/userinfo.email",
             "https://www.googleapis.com/auth/userinfo.profile",
         ]

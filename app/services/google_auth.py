@@ -16,6 +16,7 @@ from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarToke
 from app.domain.credentials import GoogleCredentials
 from app.integrations.google_auth import GoogleOAuthIntegration
 from app.repositories.user import CredentialsRepository
+from app.integrations.calendar import CalendarGateway
 
 logger = logging.getLogger(__name__)
 
@@ -40,9 +41,15 @@ class GoogleOAuthIntegrationProtocol(Protocol):
 class GoogleAuthService:
     """Управляет стартом OAuth, обменом кода на токен и сохранением токенов в БД."""
 
-    def __init__(self, settings: Settings, credentials_repo: CredentialsRepository) -> None:
+    def __init__(
+            self, 
+            settings: Settings, 
+            credentials_repo: CredentialsRepository,
+            calendar_gateway: CalendarGateway | None = None,
+        ) -> None:
         self._settings = settings
         self._repository = credentials_repo
+        self._calendar_gateway = calendar_gateway
         self._integration: GoogleOAuthIntegrationProtocol = GoogleOAuthIntegration(settings=settings)
         self._jwt_secret: str = settings.JWT_SECRET.get_secret_value()
 
@@ -105,6 +112,7 @@ class GoogleAuthService:
             if expires_at.tzinfo is None:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
         email = self._extract_email(tokens)
+        time_zone = await self._fetch_primary_calendar_timezone(tokens, telegram_id)
 
         # Формируем доменную модель
         credentials = GoogleCredentials(
@@ -113,12 +121,33 @@ class GoogleAuthService:
             refresh_token=tokens.get("refresh_token"),
             expires_at=expires_at,
             email=email,
+            time_zone=time_zone,
         )
         
         # Сохраняем в базу данных (upsert обновит данные, если они уже есть)
         await self._repository.upsert(credentials)
         
         return credentials
+
+    async def _fetch_primary_calendar_timezone(
+        self, tokens: dict[str, Any], telegram_id: int
+    ) -> str | None:
+        """Best-effort получение таймзоны. Никогда не бросает исключений —
+        сбой здесь не должен прерывать авторизацию пользователя."""
+
+        if self._calendar_gateway is None:
+            logger.debug(
+                "Calendar gateway is not configured; skipping timezone fetch for telegram_id=%s",
+                telegram_id,
+            )
+            return None
+    
+        try:
+            oauth_credentials = self._integration.build_credentials(tokens)
+            return await self._calendar_gateway.get_primary_calendar_timezone(oauth_credentials)
+        except Exception:
+            logger.warning("Could not fetch calendar timezone during login for telegram_id=%s", telegram_id, exc_info=True)
+            return None
 
     async def get_credentials(self, telegram_id: int) -> GoogleCredentials | None:
         """Загружает сохранённые токены из базы данных по telegram_id."""
@@ -176,6 +205,7 @@ class GoogleAuthService:
                refresh_token=credentials.refresh_token or db_creds.refresh_token,
                expires_at=stored_expiry,
                email=db_creds.email,
+               time_zone=db_creds.time_zone,
             )
             await self._repository.upsert(refreshed_creds)
             return credentials
