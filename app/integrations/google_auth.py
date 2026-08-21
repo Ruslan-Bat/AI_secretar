@@ -4,6 +4,8 @@ from __future__ import annotations
 import urllib.parse
 from typing import Any
 
+from datetime import datetime
+
 import os
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
@@ -97,6 +99,14 @@ class GoogleOAuthIntegration:
         }
 
     def build_credentials(self, tokens: dict[str, Any]) -> Credentials:
+
+        expiry_raw = tokens.get("expiry")
+        expiry = None
+        if isinstance(expiry_raw, str) and expiry_raw:
+            expiry = datetime.fromisoformat(expiry_raw)
+        elif isinstance(expiry_raw, datetime):
+            expiry = expiry_raw
+
         return Credentials(
             token=tokens.get("access_token"),
             refresh_token=tokens.get("refresh_token"),
@@ -104,7 +114,7 @@ class GoogleOAuthIntegration:
             client_secret=tokens.get("client_secret"),
             token_uri=tokens.get("token_uri") or "https://oauth2.googleapis.com/token",
             scopes=tokens.get("scopes"),
-            expiry=tokens.get("expiry"),
+            expiry=expiry,
         )
 
     def refresh_credentials(self, credentials: Credentials) -> Credentials:
