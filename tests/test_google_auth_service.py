@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
+from alembic.environment import Any
 from pydantic import SecretStr
 import pytest
 
@@ -77,6 +78,18 @@ def make_settings() -> Settings:
         GOOGLE_CLIENT_SECRET="test-client-secret",
         JWT_SECRET=SecretStr("test-secret-32-chars-1234567890"),
     )
+
+class FakeCalendarGatewayForAuth:
+    def __init__(self, time_zone: str | None = None, error: Exception | None = None) -> None:
+        self._time_zone = time_zone
+        self._error = error
+        self.received_credentials: Any = None
+
+    async def get_primary_calendar_timezone(self, user_credentials: Any = None) -> str:
+        self.received_credentials = user_credentials
+        if self._error is not None:
+            raise self._error
+        return self._time_zone
 
 
 @pytest.mark.asyncio
@@ -251,3 +264,79 @@ async def test_build_oauth_credentials_returns_google_credentials_object() -> No
     assert credentials.expiry is not None
     assert credentials.expiry.tzinfo is None
     assert credentials.expiry == repository._credentials.expires_at.astimezone(timezone.utc).replace(tzinfo=None)
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_tokens_stores_timezone_from_gateway() -> None:
+    repository = FakeCredentialsRepository(None)
+    calendar_gateway = FakeCalendarGatewayForAuth(time_zone="Europe/Moscow")
+    service = GoogleAuthService(
+        settings=make_settings(),
+        credentials_repo=repository,
+        calendar_gateway=calendar_gateway,
+    )
+    service._integration = FakeIntegration()
+
+    credentials = await service.exchange_code_for_tokens("code", telegram_id=7, state=None)
+
+    assert credentials.time_zone == "Europe/Moscow"
+    assert repository.upserted is not None
+    assert repository.upserted.time_zone == "Europe/Moscow"
+    assert calendar_gateway.received_credentials is not None
+    assert calendar_gateway.received_credentials.token == "test-access-token"
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_tokens_keeps_timezone_none_when_gateway_missing() -> None:
+    repository = FakeCredentialsRepository(None)
+    service = GoogleAuthService(
+        settings=make_settings(),
+        credentials_repo=repository,
+        calendar_gateway=None,
+    )
+    service._integration = FakeIntegration()
+
+    credentials = await service.exchange_code_for_tokens("code", telegram_id=8, state=None)
+
+    assert credentials.time_zone is None
+    assert repository.upserted is not None
+    assert repository.upserted.time_zone is None
+
+
+@pytest.mark.asyncio
+async def test_exchange_code_for_tokens_does_not_fail_login_when_timezone_fetch_errors() -> None:
+    repository = FakeCredentialsRepository(None)
+    calendar_gateway = FakeCalendarGatewayForAuth(error=RuntimeError("boom"))
+    service = GoogleAuthService(
+        settings=make_settings(),
+        credentials_repo=repository,
+        calendar_gateway=calendar_gateway,
+    )
+    service._integration = FakeIntegration()
+
+    credentials = await service.exchange_code_for_tokens("code", telegram_id=9, state=None)
+
+    assert credentials.time_zone is None
+    assert repository.upserted is not None
+    assert repository.upserted.time_zone is None
+
+
+@pytest.mark.asyncio
+async def test_ensure_fresh_credentials_preserves_timezone_on_refresh() -> None:
+    repository = FakeCredentialsRepository(
+        GoogleCredentials(
+            telegram_id=10,
+            access_token="expired-access-token",
+            refresh_token="refresh-token",
+            expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+            email="user@example.com",
+            time_zone="Asia/Almaty",
+        )
+    )
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+    service._integration = FakeIntegration()
+
+    await service.ensure_fresh_credentials(10)
+
+    assert repository.upserted is not None
+    assert repository.upserted.time_zone == "Asia/Almaty"
