@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from app.core.ai_exceptions import ToolArgumentError, UnknownToolError
 
@@ -26,6 +26,13 @@ def _format_validation_feedback(error: ToolArgumentError) -> str:
     )
 
 
+@runtime_checkable
+class TimeZoneProvider(Protocol):
+    #Лучше этот протокол, чем импортировать класс. Легче тестить.
+    async def get_user_time_zone(self, telegram_id: int) -> str | None: 
+        ...
+
+
 class AIAgent:
     """Обрабатывает пользовательские сообщения и оркестрирует вызовы инструментов."""
 
@@ -33,13 +40,29 @@ class AIAgent:
         self,
         deepseek_client: DeepSeekClient,
         tool_executor: ToolExecutor,
+        time_zone_provider: TimeZoneProvider | None = None,
+        default_time_zone: str = "UTC",
     ) -> None:
         self._deepseek_client = deepseek_client
         self._tool_executor = tool_executor
+        self._time_zone_provider = time_zone_provider
+        self._default_time_zone = default_time_zone
+
+    async def _resolve_time_zone(self, user_id: int) -> str:
+        if self._time_zone_provider is None:
+            return self._default_time_zone
+        try:
+            stored = await self._time_zone_provider.get_user_time_zone(user_id)
+        except Exception:
+            logger.warning("Failed to resolve time zone for user_id=%s", user_id, exc_info=True)
+            return self._default_time_zone
+        return stored or self._default_time_zone
 
     async def process_message(self, user_id: int, text: str) -> str:
+        time_zone = await self._resolve_time_zone(user_id)
+
         messages: list[dict[str, Any]] = [
-            {"role": "system", "content": get_system_prompt()},
+            {"role": "system", "content": get_system_prompt(time_zone=time_zone)},
             {"role": "user", "content": text},
         ]
         tools = [self._create_event_tool_schema()]

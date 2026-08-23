@@ -215,3 +215,9 @@ class GoogleAuthService:
     async def get_oauth_credentials(self, telegram_id: int) -> Credentials:
         """Возвращает актуальные OAuth-credentials для пользователя из БД."""
         return await self.ensure_fresh_credentials(telegram_id)
+
+    async def get_user_time_zone(self, telegram_id: int) -> str | None:
+        """Возвращает сохранённую таймзону без обращения к Google API —
+        только чтение из БД, в отличие от get_oauth_credentials."""
+        credentials = await self.get_credentials(telegram_id)
+        return credentials.time_zone if credentials is not None else None

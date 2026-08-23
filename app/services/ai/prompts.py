@@ -2,6 +2,8 @@
 
 from datetime import datetime
 
+from app.core.time_zone import parse_time_zone
+from datetime import datetime, timezone as dt_timezone
 
 _WEEKDAY_RU: dict[int, str] = {
     0: "понедельник",
@@ -14,8 +16,9 @@ _WEEKDAY_RU: dict[int, str] = {
 }
 
 
-def get_system_prompt() -> str:
-    now = datetime.now() 
+def get_system_prompt(time_zone: str | None = None) -> str:
+    tz = parse_time_zone(time_zone, dt_timezone.utc)
+    now = datetime.now(tz)
     current_date = now.strftime("%Y-%m-%d")
     current_time = now.strftime("%H:%M")
     weekday = _WEEKDAY_RU[now.weekday()]

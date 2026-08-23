@@ -92,6 +92,8 @@ def build_container(
         ai_agent = AIAgent(
             deepseek_client=deepseek_client,
             tool_executor=tool_executor,
+            time_zone_provider=auth_service,
+            default_time_zone=settings.GOOGLE_CALENDAR_TIMEZONE
         )
 
     return AppContainer(

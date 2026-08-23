@@ -1,7 +1,7 @@
 """Проверяет строгий формат команд и вызывает независимый CalendarGateway."""
 
 from collections.abc import Callable
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta, timezone, tzinfo
 from typing import Any
 from zoneinfo import ZoneInfo
 
@@ -10,6 +10,7 @@ from app.core.calendar_exceptions import (
     CalendarAuthRequiredError,
     CalendarInputError,
 )
+from app.core.time_zone import parse_time_zone
 from app.domain.calendar_event import CalendarEvent
 from app.integrations.calendar import CalendarGateway
 from app.services.google_auth import GoogleAuthService
@@ -34,7 +35,7 @@ class CalendarService:
         auth_service: GoogleAuthService | None = None,
     ) -> None:
         self._gateway = gateway
-        self._time_zone = ZoneInfo(time_zone)
+        self._default_time_zone = ZoneInfo(time_zone)
         self._max_results = max_results
         self._clock = clock
         self._auth_service = auth_service
@@ -82,11 +83,12 @@ class CalendarService:
             )
 
         date_text, time_text, duration_text, title = parts
+        time_zone = await self._resolve_time_zone(telegram_id)
         try:
             start = datetime.strptime(
                 f"{date_text} {time_text}",
                 "%Y-%m-%d %H:%M",
-            ).replace(tzinfo=self._time_zone)
+            ).replace(tzinfo=time_zone)
         except ValueError:
             raise CalendarInputError(
                 "Дата и время должны иметь формат ГГГГ-ММ-ДД ЧЧ:ММ"
@@ -120,3 +122,16 @@ class CalendarService:
             raise CalendarInputError("Некорректный EVENT_ID")
         user_credentials = await self._get_user_credentials(telegram_id)
         await self._gateway.delete_event(event_id, user_credentials=user_credentials)
+
+    async def _resolve_time_zone(self, telegram_id: int | None) -> tzinfo:
+        if telegram_id is None or self._auth_service is None:
+            return self._default_time_zone
+        try:
+            stored = await self._auth_service.get_user_time_zone(telegram_id)
+        except Exception:
+            logger.warning(
+                "Failed to resolve time zone for telegram_id=%s; using default",
+                telegram_id, exc_info=True,
+            )
+            return self._default_time_zone
+        return parse_time_zone(stored, self._default_time_zone)
