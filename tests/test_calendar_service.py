@@ -20,6 +20,7 @@ class FakeCalendarGateway:
         self.created: tuple[str, datetime, datetime] | None = None
         self.deleted_event_id: str | None = None
         self.user_credentials: Any | None = None
+        self.time_zone_requested: bool = False
 
     async def list_upcoming(
         self,
@@ -28,7 +29,7 @@ class FakeCalendarGateway:
         limit: int,
         user_credentials: Any | None = None,
     ) -> list[CalendarEvent]:
-        self.list_call = (time_min, limit, user_credentials)
+        self.list_call = (time_min, limit)
         return self.events
 
     async def create_event(
@@ -52,6 +53,11 @@ class FakeCalendarGateway:
         self.deleted_event_id = event_id
         self.user_credentials = user_credentials
 
+    async def get_primary_calendar_timezone(self, user_credentials: Any | None = None) -> str:
+        self.time_zone_requested = True
+        self.user_credentials = user_credentials
+        return "Europe/Moscow"
+
 
 def make_service(
     gateway: FakeCalendarGateway,
@@ -65,6 +71,11 @@ def make_service(
         auth_service=auth_service,
     )
 
+def _fake_oauth_credentials(refresh_token: str = "fake-refresh-token") -> SimpleNamespace:
+    """Минимальная замена объекта google.oauth2.credentials.Credentials
+    для тестов CalendarService.list_upcoming — несёт единственный
+    атрибут, реально используемый сервисом (отладочное логирование)."""
+    return SimpleNamespace(refresh_token=refresh_token)
 
 @pytest.mark.asyncio
 async def test_lists_upcoming_events_with_limit() -> None:
@@ -77,7 +88,8 @@ async def test_lists_upcoming_events_with_limit() -> None:
     )
     gateway.events = [expected]
 
-    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
+    fake_credentials = _fake_oauth_credentials()
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value=fake_credentials))
 
     result = await make_service(gateway, auth_service=auth_service).list_upcoming(telegram_id=123)
 
@@ -85,14 +97,12 @@ async def test_lists_upcoming_events_with_limit() -> None:
     assert gateway.list_call == (
         datetime(2026, 7, 19, 10, 0, tzinfo=timezone.utc),
         5,
-        "credentials",
+        fake_credentials,
     )
-
 
 @pytest.mark.asyncio
 async def test_lists_upcoming_events_with_user_credentials() -> None:
     gateway = FakeCalendarGateway()
-    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
     expected = CalendarEvent(
         event_id="event-1",
         title="Встреча",
@@ -101,20 +111,26 @@ async def test_lists_upcoming_events_with_user_credentials() -> None:
     )
     gateway.events = [expected]
 
+    fake_credentials = _fake_oauth_credentials()
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value=fake_credentials))
+
     result = await make_service(gateway, auth_service=auth_service).list_upcoming(telegram_id=123)
 
     assert result == [expected]
     assert gateway.list_call == (
         datetime(2026, 7, 19, 10, 0, tzinfo=timezone.utc),
         5,
-        "credentials",
+        fake_credentials,
     )
 
 
 @pytest.mark.asyncio
 async def test_creates_event_from_deterministic_command() -> None:
     gateway = FakeCalendarGateway()
-    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
+    auth_service = SimpleNamespace(
+        get_oauth_credentials=AsyncMock(return_value="credentials"),
+        get_user_time_zone=AsyncMock(return_value=None)
+    )
 
     result = await make_service(gateway, auth_service=auth_service).create_from_text(
         "2026-07-20 14:30 60 Рабочая встреча",
@@ -130,20 +146,6 @@ async def test_creates_event_from_deterministic_command() -> None:
     assert gateway.user_credentials == "credentials"
 
 
-@pytest.mark.asyncio
-@pytest.mark.parametrize(
-    "arguments",
-    [
-        None,
-        "2026-07-20",
-        "20.07.2026 14:30 60 Встреча",
-        "2026-07-20 14:30 zero Встреча",
-        "2026-07-20 14:30 0 Встреча",
-    ],
-)
-async def test_rejects_invalid_add_event_arguments(arguments: str | None) -> None:
-    with pytest.raises(CalendarInputError):
-        await make_service(FakeCalendarGateway(), auth_service=SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))).create_from_text(arguments)
 
 @pytest.mark.asyncio
 async def test_deletes_event_by_id() -> None:
@@ -160,20 +162,49 @@ async def test_deletes_event_by_id() -> None:
 
 
 @pytest.mark.asyncio
-async def test_rejects_invalid_delete_event_id() -> None:
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        None,
+        "2026-07-20",
+        "20.07.2026 14:30 60 Встреча",
+        "2026-07-20 14:30 zero Встреча",
+        "2026-07-20 14:30 0 Встреча",
+    ],
+)
+async def test_rejects_invalid_add_event_arguments(arguments: str | None) -> None:
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
     with pytest.raises(CalendarInputError):
-        await make_service(FakeCalendarGateway(), auth_service=SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))).delete_from_text("two ids")
+        await make_service(FakeCalendarGateway(), auth_service=auth_service).create_from_text(
+            arguments, telegram_id=123
+        )
 
 
 @pytest.mark.asyncio
-async def test_requires_telegram_id_for_add_event() -> None:
-    gateway = FakeCalendarGateway()
-    with pytest.raises(CalendarAuthRequiredError):
-        await make_service(gateway).create_from_text("2026-07-20 14:30 60 Встреча")
+async def test_rejects_invalid_delete_event_id() -> None:
+    auth_service = SimpleNamespace(get_oauth_credentials=AsyncMock(return_value="credentials"))
+    with pytest.raises(CalendarInputError):
+        await make_service(FakeCalendarGateway(), auth_service=auth_service).delete_from_text(
+            "two ids", telegram_id=123
+        )
 
 
 @pytest.mark.asyncio
-async def test_requires_telegram_id_for_delete_event() -> None:
+async def test_raises_auth_required_when_auth_service_missing_for_add_event() -> None:
+    """Ранее назывался test_requires_telegram_id_for_add_event — но
+    telegram_id обязателен по сигнатуре, реально этот тест проверяет
+    отсутствие auth_service (make_service(gateway) передаёт auth_service=None)."""
     gateway = FakeCalendarGateway()
     with pytest.raises(CalendarAuthRequiredError):
-        await make_service(gateway).delete_from_text("event-id-123")
+        await make_service(gateway).create_from_text(
+            "2026-07-20 14:30 60 Встреча", telegram_id=123
+        )
+
+
+@pytest.mark.asyncio
+async def test_raises_auth_required_when_auth_service_missing_for_delete_event() -> None:
+    """Ранее назывался test_requires_telegram_id_for_delete_event — см.
+    комментарий выше, аналогичная причина переименования."""
+    gateway = FakeCalendarGateway()
+    with pytest.raises(CalendarAuthRequiredError):
+        await make_service(gateway).delete_from_text("event-id-123", telegram_id=123)
