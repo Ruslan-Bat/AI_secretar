@@ -56,7 +56,7 @@ class CalendarService:
         logger.debug(
             "Calendar list requested by telegram_id=%s refresh_token=%s",
             telegram_id,
-            user_credentials.refresh_token,
+            "refresh_token_present=%s", bool(user_credentials.refresh_token),
         )
         
         return await self._gateway.list_upcoming(
