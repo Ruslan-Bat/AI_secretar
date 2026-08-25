@@ -1,4 +1,6 @@
 @echo off
+chcp 65001 > NUL
+
 echo Запуск базы данных...
 docker compose up -d
 
