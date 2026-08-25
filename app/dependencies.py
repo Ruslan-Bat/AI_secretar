@@ -14,6 +14,7 @@ from app.repositories.sql_user import SqlCredentialsRepository, SqlUserRepositor
 from app.repositories.user import UserRepository
 from app.services.ai.agent import AIAgent
 from app.services.ai.executor import ToolExecutor
+from app.services.ai.memory import InMemoryConversationMemory
 from app.services.calendar import CalendarService
 from app.services.google_auth import GoogleAuthService
 from app.services.user import UserService
@@ -89,11 +90,13 @@ def build_container(
             api_key=settings.DEEPSEEK_API_KEY.get_secret_value(),
         )
         tool_executor = ToolExecutor(calendar_service)
+        conversation_memory = InMemoryConversationMemory(max_pairs=5)
         ai_agent = AIAgent(
             deepseek_client=deepseek_client,
             tool_executor=tool_executor,
             time_zone_provider=auth_service,
-            default_time_zone=settings.GOOGLE_CALENDAR_TIMEZONE
+            default_time_zone=settings.GOOGLE_CALENDAR_TIMEZONE,
+            memory=conversation_memory
         )
 
     return AppContainer(

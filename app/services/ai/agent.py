@@ -31,6 +31,10 @@ class ConversationMemory(Protocol):
         """Возвращает пары (user_text, assistant_text) в хронологическом порядке (старые → новые)."""
         ...
 
+    async def append_pair(self, user_id: int, user_text: str, assistant_text: str) -> None:
+        """Добавляет новую пару, вытесняя самую старую при превышении лимита."""
+        ...
+
 @runtime_checkable
 class TimeZoneProvider(Protocol):
     #Лучше этот протокол, чем импортировать класс. Легче тестить.
@@ -47,11 +51,13 @@ class AIAgent:
         tool_executor: ToolExecutor,
         time_zone_provider: TimeZoneProvider | None = None,
         default_time_zone: str = "UTC",
+        memory: ConversationMemory | None = None,
     ) -> None:
         self._deepseek_client = deepseek_client
         self._tool_executor = tool_executor
         self._time_zone_provider = time_zone_provider
         self._default_time_zone = default_time_zone
+        self._memory = memory
 
     async def _resolve_time_zone(self, user_id: int) -> str:
         if self._time_zone_provider is None:
@@ -66,10 +72,18 @@ class AIAgent:
     async def process_message(self, user_id: int, text: str) -> str:
         time_zone = await self._resolve_time_zone(user_id)
 
+        history = await self._memory.get_recent_pairs(user_id) if self._memory else []
+
         messages: list[dict[str, Any]] = [
             {"role": "system", "content": get_system_prompt(time_zone=time_zone)},
-            {"role": "user", "content": text},
         ]
+
+        for past_user_test, past_assistant_text in history:
+            messages.append({"role": "user", "content": past_user_test})
+            messages.append({"role": "assistant", "content": past_assistant_text})
+
+        messages.append({"role": "user", "content": text})
+
         tools = [self._create_event_tool_schema()]
 
         #Agent loop: модель может вызывать инструменты несколько раз, пока не сформирует финальный ответ.
@@ -87,7 +101,9 @@ class AIAgent:
             tool_calls = getattr(assistant_message, "tool_calls", None) or []
             if not tool_calls:
                 content = (assistant_message.content or "").strip()
-                return content or "Не удалось сформировать ответ."
+                result = content or "Не удалось сформировать ответ."
+                await self._remember(user_id, text, result)
+                return result
 
             messages.append(
                 {
@@ -152,6 +168,18 @@ class AIAgent:
             "Если вы просили создать событие — проверьте календарь: "
             "оно могло быть создано, даже если ответ не пришёл."
         )
+
+    async def _remember(self, user_id: int, user_text: str, assistant_text: str) -> None:
+        if self._memory is None:
+            return
+        try:
+            await self._memory.append_pair(user_id, user_text, assistant_text)
+        except Exception:
+            logger.warning(
+                "Failed to store conversation memory for user_id=%s", 
+                user_id,
+                exc_info=True,
+            )
     
     def _create_event_tool_schema(self) -> dict[str, Any]:
         return {
