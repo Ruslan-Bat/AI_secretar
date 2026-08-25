@@ -25,6 +25,11 @@ def _format_validation_feedback(error: ToolArgumentError) -> str:
         f"{error.original.errors()!r}. Исправь формат и повтори вызов."
     )
 
+@runtime_checkable
+class ConversationMemory(Protocol):
+    async def get_recent_pairs(self, user_id: int) -> list[tuple[str, str]]:
+        """Возвращает пары (user_text, assistant_text) в хронологическом порядке (старые → новые)."""
+        ...
 
 @runtime_checkable
 class TimeZoneProvider(Protocol):
