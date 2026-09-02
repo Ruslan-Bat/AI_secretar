@@ -123,6 +123,168 @@ class CalendarService:
         user_credentials = await self._get_user_credentials(telegram_id)
         await self._gateway.delete_event(event_id, user_credentials=user_credentials)
 
+    async def get_events(
+        self,
+        start_day_offset: int = 0,
+        end_day_offset: int = 1,
+        telegram_id: int | None = None,
+    ) -> list[CalendarEvent]:
+        """Возвращает события с начала первого до конца последнего дня."""
+        if start_day_offset > end_day_offset:
+            raise CalendarInputError("Начало диапазона не может быть позже конца")
+        if telegram_id is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+
+        time_zone = await self._resolve_time_zone(telegram_id)
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        today = now.astimezone(time_zone).date()
+        range_start = datetime.combine(
+            today + timedelta(days=start_day_offset),
+            datetime.min.time(),
+            tzinfo=time_zone,
+        )
+        range_end = datetime.combine(
+            today + timedelta(days=end_day_offset + 1),
+            datetime.min.time(),
+            tzinfo=time_zone,
+        )
+
+        user_credentials = await self._get_user_credentials(telegram_id)
+        events = await self._gateway.list_upcoming(
+            time_min=range_start.astimezone(timezone.utc),
+            limit=2500,
+            user_credentials=user_credentials,
+        )
+
+        result: list[CalendarEvent] = []
+        for event in events:
+            start = event.start
+            end = event.end
+            if not isinstance(start, datetime):
+                start = datetime.combine(start, datetime.min.time(), tzinfo=time_zone)
+            elif start.tzinfo is None:
+                start = start.replace(tzinfo=time_zone)
+            if not isinstance(end, datetime):
+                end = datetime.combine(end, datetime.min.time(), tzinfo=time_zone)
+            elif end.tzinfo is None:
+                end = end.replace(tzinfo=time_zone)
+            if start < range_end and end > range_start:
+                result.append(event)
+        return result
+
+    async def get_free_slots(
+        self,
+        start_day_offset: int = 0,
+        end_day_offset: int = 1,
+        telegram_id: int | None = None,
+    ) -> list[tuple[datetime, datetime]]:
+        """Возвращает свободные получасовые слоты в указанном диапазоне дней."""
+        events = await self.get_events(start_day_offset, end_day_offset, telegram_id)
+        if telegram_id is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+
+        time_zone = await self._resolve_time_zone(telegram_id)
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        today = now.astimezone(time_zone).date()
+        slot_start = datetime.combine(
+            today + timedelta(days=start_day_offset),
+            datetime.min.time(),
+            tzinfo=time_zone,
+        )
+        range_end = datetime.combine(
+            today + timedelta(days=end_day_offset + 1),
+            datetime.min.time(),
+            tzinfo=time_zone,
+        )
+
+        busy: list[tuple[datetime, datetime]] = []
+        for event in events:
+            start = event.start
+            end = event.end
+            if not isinstance(start, datetime):
+                start = datetime.combine(start, datetime.min.time(), tzinfo=time_zone)
+            elif start.tzinfo is None:
+                start = start.replace(tzinfo=time_zone)
+            if not isinstance(end, datetime):
+                end = datetime.combine(end, datetime.min.time(), tzinfo=time_zone)
+            elif end.tzinfo is None:
+                end = end.replace(tzinfo=time_zone)
+            busy.append((start, end))
+
+        slots: list[tuple[datetime, datetime]] = []
+        while slot_start < range_end:
+            slot_end = slot_start + timedelta(minutes=30)
+            if not any(start < slot_end and end > slot_start for start, end in busy):
+                slots.append((slot_start, slot_end))
+            slot_start = slot_end
+        return slots
+
+    async def move_event(
+        self,
+        event_id: str,
+        new_date: str,
+        new_time: str,
+        duration_minutes: int,
+        telegram_id: int,
+    ) -> CalendarEvent:
+        """Проверяет новое время, удаляет старое событие и создаёт новое."""
+        if not event_id or any(character.isspace() for character in event_id):
+            raise CalendarInputError(
+                "Формат: EVENT_ID ГГГГ-ММ-ДД ЧЧ:ММ МИНУТЫ"
+            )
+        if len(event_id) > 1024:
+            raise CalendarInputError("Некорректный EVENT_ID")
+        if not isinstance(duration_minutes, int) or not 1 <= duration_minutes <= 1440:
+            raise CalendarInputError("Длительность должна быть от 1 до 1440 минут")
+
+        time_zone = await self._resolve_time_zone(telegram_id)
+        try:
+            new_start = datetime.strptime(
+                f"{new_date} {new_time}", "%Y-%m-%d %H:%M"
+            ).replace(tzinfo=time_zone)
+        except ValueError:
+            raise CalendarInputError(
+                "Дата и время должны иметь формат ГГГГ-ММ-ДД ЧЧ:ММ"
+            ) from None
+        new_end = new_start + timedelta(minutes=duration_minutes)
+
+        now = self._clock()
+        if now.tzinfo is None:
+            now = now.replace(tzinfo=timezone.utc)
+        today = now.astimezone(time_zone).date()
+        start_offset = (new_start.date() - today).days
+        end_offset = ((new_end - timedelta(microseconds=1)).date() - today).days
+        events = await self.get_events(start_offset, end_offset, telegram_id)
+
+        for event in events:
+            if event.event_id == event_id:
+                continue
+            start = event.start
+            end = event.end
+            if not isinstance(start, datetime):
+                start = datetime.combine(start, datetime.min.time(), tzinfo=time_zone)
+            elif start.tzinfo is None:
+                start = start.replace(tzinfo=time_zone)
+            if not isinstance(end, datetime):
+                end = datetime.combine(end, datetime.min.time(), tzinfo=time_zone)
+            elif end.tzinfo is None:
+                end = end.replace(tzinfo=time_zone)
+            if start < new_end and end > new_start:
+                raise CalendarInputError("Выбранное время занято")
+
+        user_credentials = await self._get_user_credentials(telegram_id)
+        await self._gateway.delete_event(event_id, user_credentials=user_credentials)
+        return await self._gateway.create_event(
+            title="Перенесённое событие",
+            start=new_start,
+            end=new_end,
+            user_credentials=user_credentials,
+        )
+
     async def _resolve_time_zone(self, telegram_id: int | None) -> tzinfo:
         if telegram_id is None or self._auth_service is None:
             return self._default_time_zone
