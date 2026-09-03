@@ -86,6 +86,54 @@ class GoogleCalendarGateway:
                 "Google Calendar is temporarily unavailable"
             ) from error
 
+    async def update_event(
+        self,
+        event_id: str,
+        *,
+        start: datetime,
+        end: datetime,
+        user_credentials: OAuthCredentials | None = None,
+    ) -> CalendarEvent:
+        try:
+            return await asyncio.to_thread(
+                self._update_event, event_id, start, end, user_credentials
+            )
+        except EventNotFoundError:
+            raise
+        except Exception as error:
+            logger.exception("Google Calendar patch failed: %s", error)
+            raise CalendarIntegrationError(
+                "Google Calendar is temporarily unavailable"
+            ) from error
+
+    def _update_event(
+        self,
+        event_id: str,
+        start: datetime,
+        end: datetime,
+        user_credentials: OAuthCredentials | None = None,
+    ) -> CalendarEvent:
+        body = {
+            "start": {"dateTime": start.isoformat(), "timeZone": self._time_zone_name},
+            "end": {"dateTime": end.isoformat(), "timeZone": self._time_zone_name},
+        }
+        try:
+            result = (
+                self._get_service(user_credentials)
+                .events()
+                .patch(
+                    calendarId=self._get_calendar_id(user_credentials),
+                    eventId=event_id,
+                    body=body,
+                )
+                .execute()
+            )
+        except HttpError as error:
+            if error.resp.status in (404, 410):
+                raise EventNotFoundError("Событие не найдено в Google Календаре")
+            raise
+        return self._from_google_event(result)
+
     async def get_primary_calendar_timezone(self, user_credentials: OAuthCredentials | None = None) -> str:
         try:
             return await asyncio.to_thread(self._get_primary_calendar_timezone, user_credentials)

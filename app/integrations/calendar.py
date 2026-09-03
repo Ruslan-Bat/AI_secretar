@@ -35,3 +35,14 @@ class CalendarGateway(Protocol):
     async def get_primary_calendar_timezone(self, user_credentials: Any | None = None) -> str:
         """Возвращает IANA-имя часового пояса основного календаря пользователя."""
         ...
+
+    async def update_event(
+        self,
+        event_id: str,
+        *,
+        start: datetime,
+        end: datetime,
+        user_credentials: Any | None = None,
+    ) -> CalendarEvent:
+        """Частично обновляет событие, сохраняя незатронутые поля."""
+        ...
