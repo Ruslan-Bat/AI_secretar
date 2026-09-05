@@ -49,10 +49,11 @@ class GoogleCalendarGateway:
         *,
         time_min: datetime,
         limit: int,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> list[CalendarEvent]:
         try:
-            return await asyncio.to_thread(self._list_upcoming, time_min, limit, user_credentials)
+            return await asyncio.to_thread(self._list_upcoming, time_min, limit, time_zone, user_credentials)
         except Exception as error:
             logger.exception("Google Calendar list failed: %s", error)
             raise CalendarIntegrationError(
@@ -65,10 +66,11 @@ class GoogleCalendarGateway:
         title: str,
         start: datetime,
         end: datetime,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
         try:
-            return await asyncio.to_thread(self._create_event, title, start, end, user_credentials)
+            return await asyncio.to_thread(self._create_event, title, start, end, time_zone, user_credentials)
         except Exception as error:
             logger.exception("Google Calendar insert failed: %s", error)
             raise CalendarIntegrationError(
@@ -92,11 +94,12 @@ class GoogleCalendarGateway:
         *,
         start: datetime,
         end: datetime,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
         try:
             return await asyncio.to_thread(
-                self._update_event, event_id, start, end, user_credentials
+                self._update_event, event_id, start, end, time_zone, user_credentials
             )
         except EventNotFoundError:
             raise
@@ -111,11 +114,13 @@ class GoogleCalendarGateway:
         event_id: str,
         start: datetime,
         end: datetime,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
+        zone_name = time_zone or self._time_zone_name
         body = {
-            "start": {"dateTime": start.isoformat(), "timeZone": self._time_zone_name},
-            "end": {"dateTime": end.isoformat(), "timeZone": self._time_zone_name},
+            "start": {"dateTime": start.isoformat(), "timeZone": zone_name},
+            "end": {"dateTime": end.isoformat(), "timeZone": zone_name},
         }
         try:
             result = (
@@ -164,8 +169,10 @@ class GoogleCalendarGateway:
         self,
         time_min: datetime,
         limit: int,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> list[CalendarEvent]:
+        zone_name = time_zone or self._time_zone_name
         response = (
             self._get_service(user_credentials)
             .events()
@@ -175,7 +182,7 @@ class GoogleCalendarGateway:
                 maxResults=limit,
                 singleEvents=True,
                 orderBy="startTime",
-                timeZone=self._time_zone_name,
+                timeZone=zone_name,
             )
             .execute()
         )
@@ -193,17 +200,19 @@ class GoogleCalendarGateway:
         title: str,
         start: datetime,
         end: datetime,
+        time_zone=None,
         user_credentials: OAuthCredentials | None = None,
     ) -> CalendarEvent:
+        zone_name = time_zone or self._time_zone_name
         body = {
             "summary": title,
             "start": {
                 "dateTime": start.isoformat(),
-                "timeZone": self._time_zone_name,
+                "timeZone": zone_name,
             },
             "end": {
                 "dateTime": end.isoformat(),
-                "timeZone": self._time_zone_name,
+                "timeZone": zone_name,
             },
         }
         result = (

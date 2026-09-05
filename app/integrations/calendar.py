@@ -13,6 +13,7 @@ class CalendarGateway(Protocol):
         *,
         time_min: datetime,
         limit: int,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> list[CalendarEvent]:
         """Возвращает ближайшие события, отсортированные по времени начала."""
@@ -24,6 +25,7 @@ class CalendarGateway(Protocol):
         title: str,
         start: datetime,
         end: datetime,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> CalendarEvent:
         """Создаёт и возвращает событие с заданным временем."""
@@ -42,6 +44,7 @@ class CalendarGateway(Protocol):
         *,
         start: datetime,
         end: datetime,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> CalendarEvent:
         """Частично обновляет событие, сохраняя незатронутые поля."""

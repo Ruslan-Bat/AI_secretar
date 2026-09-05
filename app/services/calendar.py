@@ -116,6 +116,7 @@ class CalendarService:
             title=title,
             start=start,
             end=start + timedelta(minutes=duration_minutes),
+            time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
 
@@ -243,6 +244,7 @@ class CalendarService:
             event_id,
             start=new_start,
             end=new_end,
+            time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
 
@@ -326,6 +328,7 @@ class CalendarService:
         events = await self._gateway.list_upcoming(
             time_min=range_start.astimezone(timezone.utc),
             limit=_MAX_EVENTS_PER_QUERY,
+            time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
 
