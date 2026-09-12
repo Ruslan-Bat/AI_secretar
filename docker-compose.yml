@@ -28,5 +28,7 @@ services:
       db:
         condition: service_healthy
     restart: unless-stopped
+    volumes:
+      - ./logs/app.log:/app.log
     command: >
       sh -c "alembic upgrade head && python -m app.main"
