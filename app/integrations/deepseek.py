@@ -24,7 +24,7 @@ class DeepSeekClient:
         # OpenAI/AsyncOpenAI type hints expect specialized message/tool param types.
         # Cast to Any to satisfy runtime usage and silence static type checkers.
         return await self._client.chat.completions.create(
-            model="deepseek-chat",
+            model="deepseek-v4-pro",
             messages=cast(Any, messages),  # type: ignore[arg-type]
             tools=cast(Any, tools),        # type: ignore[arg-type]
         )
