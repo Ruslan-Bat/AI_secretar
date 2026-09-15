@@ -230,14 +230,6 @@ class CalendarService:
         end_offset = ((new_end - timedelta(microseconds=1)).date() - today).days
         events = await self.get_events(start_offset, end_offset, telegram_id)
 
-        for event in events:
-            if event.event_id == event_id:
-                continue
-            start, end, is_all_day = self._event_bounds(event, time_zone)
-            if is_all_day:
-                continue
-            if start < new_end and end > new_start:
-                raise CalendarInputError("Выбранное время занято")
 
         user_credentials = await self._get_user_credentials(telegram_id)
         return await self._gateway.update_event(
