@@ -10,7 +10,7 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 def configure_logging(*, debug: bool = False) -> None:
     """Настраивает вывод логов приложения."""
 
-    file_handler = logging.FileHandler("app.log", encoding="utf-8", mode="a")
+    file_handler = logging.FileHandler("logs/app.log", encoding="utf-8", mode="a")
     console_handler = logging.StreamHandler(sys.stdout)
     
     logging.basicConfig(
