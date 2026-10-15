@@ -11,7 +11,7 @@ import pytest
 from google.oauth2.credentials import Credentials
 
 from app.config import Settings
-from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarTokenRefreshError
+from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarInputError, CalendarTokenRefreshError
 from app.domain.credentials import GoogleCredentials
 from app.services.google_auth import GoogleAuthService
 
@@ -26,6 +26,7 @@ class FakeCredentialsRepository:
 
     async def upsert(self, credentials: GoogleCredentials) -> GoogleCredentials:
         self.upserted = credentials
+        self._credentials = credentials
         return credentials
 
 
@@ -340,3 +341,61 @@ async def test_ensure_fresh_credentials_preserves_timezone_on_refresh() -> None:
 
     assert repository.upserted is not None
     assert repository.upserted.time_zone == "Asia/Almaty"
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_preserves_tokens_and_account() -> None:
+    credentials = GoogleCredentials(
+        telegram_id=123,
+        access_token="access-token",
+        refresh_token="refresh-token",
+        expires_at=datetime.now(timezone.utc) + timedelta(hours=1),
+        email="user@example.com",
+        time_zone="UTC",
+    )
+    repository = FakeCredentialsRepository(credentials)
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+
+    assert await service.set_user_time_zone(123, "Europe/Moscow") == "Europe/Moscow"
+    assert await service.get_user_time_zone(123) == "Europe/Moscow"
+    assert repository.upserted.access_token == credentials.access_token
+    assert repository.upserted.refresh_token == credentials.refresh_token
+    assert repository.upserted.email == credentials.email
+    assert repository.upserted.expires_at == credentials.expires_at
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_rejects_invalid_zone_before_saving() -> None:
+    repository = FakeCredentialsRepository(None)
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+
+    with pytest.raises(CalendarInputError):
+        await service.set_user_time_zone(123, "Not/AZone")
+    assert repository.upserted is None
+
+
+@pytest.mark.asyncio
+async def test_set_timezone_requires_google_login() -> None:
+    repository = FakeCredentialsRepository(None)
+    service = GoogleAuthService(settings=make_settings(), credentials_repo=repository)
+
+    with pytest.raises(CalendarAuthRequiredError):
+        await service.set_user_time_zone(123, "Europe/Moscow")
+    assert repository.upserted is None
+
+
+@pytest.mark.asyncio
+async def test_login_does_not_reset_selected_timezone_to_calendar_utc() -> None:
+    repository = FakeCredentialsRepository(
+        GoogleCredentials(telegram_id=123, access_token="old-token", time_zone="Europe/Moscow")
+    )
+    service = GoogleAuthService(
+        settings=make_settings(), credentials_repo=repository,
+        calendar_gateway=FakeCalendarGatewayForAuth(time_zone="UTC"),
+    )
+    service._integration = FakeIntegration()
+
+    credentials = await service.exchange_code_for_tokens("code", telegram_id=123)
+
+    assert credentials.time_zone == "Europe/Moscow"
+    assert credentials.access_token == "test-access-token"
