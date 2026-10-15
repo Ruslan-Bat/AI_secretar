@@ -4,15 +4,17 @@ from __future__ import annotations
 
 import logging
 import jwt
+from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 from typing import Any, Protocol, runtime_checkable
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from google.auth.transport import requests
 from google.oauth2 import id_token
 from google.oauth2.credentials import Credentials
 
 from app.config import Settings
-from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarTokenRefreshError
+from app.core.calendar_exceptions import CalendarAuthRequiredError, CalendarInputError, CalendarTokenRefreshError
 from app.domain.credentials import GoogleCredentials
 from app.integrations.google_auth import GoogleOAuthIntegration
 from app.repositories.user import CredentialsRepository
@@ -113,6 +115,10 @@ class GoogleAuthService:
                 expires_at = expires_at.replace(tzinfo=timezone.utc)
         email = self._extract_email(tokens)
         time_zone = await self._fetch_primary_calendar_timezone(tokens, telegram_id)
+        previous = await self.get_credentials(telegram_id)
+        # Повторный вход не сбрасывает сохранённый выбор пользователя.
+        if previous is not None and previous.time_zone:
+            time_zone = previous.time_zone
 
         # Формируем доменную модель
         credentials = GoogleCredentials(
@@ -221,3 +227,18 @@ class GoogleAuthService:
         только чтение из БД, в отличие от get_oauth_credentials."""
         credentials = await self.get_credentials(telegram_id)
         return credentials.time_zone if credentials is not None else None
+
+    async def set_user_time_zone(self, telegram_id: int, time_zone: str) -> str:
+        """Сохраняет часовой пояс, не изменяя OAuth-токены."""
+        time_zone = time_zone.strip()
+        try:
+            ZoneInfo(time_zone)
+        except (ZoneInfoNotFoundError, ValueError):
+            raise CalendarInputError(
+                "Неизвестный часовой пояс. Пример: /timezone Europe/Moscow"
+            ) from None
+        credentials = await self.get_credentials(telegram_id)
+        if credentials is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        await self._repository.upsert(replace(credentials, time_zone=time_zone))
+        return time_zone

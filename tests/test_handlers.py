@@ -22,7 +22,7 @@ async def test_start_registers_user_and_replies() -> None:
     )
     user_service = SimpleNamespace(register_or_update=AsyncMock())
 
-    await handle_start(message, user_service)
+    await handle_start(message, SimpleNamespace(args=None), user_service)
 
     user_service.register_or_update.assert_awaited_once_with(
         telegram_id=101,
@@ -47,6 +47,10 @@ async def test_help_lists_all_commands() -> None:
     assert "/calendar" in response
     assert "/add_event" in response
     assert "/delete_event" in response
+    assert "/login" in response
+    assert "/today" in response
+    assert "/timezone Europe/Moscow" in response
+    assert message.answer.await_args.kwargs["parse_mode"] is None
 
 
 @pytest.mark.asyncio

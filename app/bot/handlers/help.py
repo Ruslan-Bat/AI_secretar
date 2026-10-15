@@ -7,13 +7,25 @@ from aiogram.types import Message
 
 async def handle_help(message: Message) -> None:
     await message.answer(
-        "Доступные команды:\n"
-        "/start — запустить и зарегистрировать пользователя\n"
-        "/help — показать эту справку\n"
-        "/ping — проверить работу ядра\n"
-        "/calendar — ближайшие события Google Calendar\n"
+        "Подключение календаря:\n"
+        "/start — начать работу\n"
+        "/login — подключить свой Google Calendar\n\n"
+        "Просмотр событий:\n"
+        "/today — все события на сегодня\n"
+        "/calendar — ближайшие события\n\n"
+        "Создать событие:\n"
         "/add_event ГГГГ-ММ-ДД ЧЧ:ММ МИНУТЫ НАЗВАНИЕ\n"
-        "/delete_event EVENT_ID — удалить событие"
+        "МИНУТЫ — длительность; время указывайте через двоеточие.\n\n"
+        "Удалить событие:\n"
+        "/delete_event EVENT_ID\n"
+        "ID можно скопировать из ответа /today или /calendar.\n\n"
+        "Часовой пояс:\n"
+        "/timezone — показать текущий пояс\n"
+        "/timezone Europe/Moscow — установить московское время\n"
+        "Время в командах и ответах используется в выбранном поясе.\n\n"
+        "/help — справка\n"
+        "/ping — проверить работу бота",
+        parse_mode=None,
     )
 
 

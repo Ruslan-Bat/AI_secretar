@@ -1,6 +1,7 @@
 """Проверяет строгий формат команд и вызывает независимый CalendarGateway."""
 
 from collections.abc import Callable
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone, tzinfo, time
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -57,18 +58,21 @@ class CalendarService:
             raise CalendarAuthRequiredError("Нужно пройти /login")
 
         user_credentials = await self._auth_service.get_oauth_credentials(telegram_id)
+        time_zone = await self._resolve_time_zone(telegram_id)
 
         logger.debug(
-            "Calendar list requested by telegram_id=%s refresh_token=%s",
+            "Calendar list requested by telegram_id=%s refresh_token_present=%s",
             telegram_id,
-            "refresh_token_present=%s", bool(user_credentials.refresh_token),
+            bool(user_credentials.refresh_token),
         )
         
-        return await self._gateway.list_upcoming(
+        events = await self._gateway.list_upcoming(
             time_min=now.astimezone(timezone.utc),
             limit=self._max_results,
+            time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
+        return [self._localize_event(event, time_zone) for event in events]
 
     async def _get_user_credentials(self, telegram_id: int) -> Any | None:
         if self._auth_service is None:
@@ -112,13 +116,14 @@ class CalendarService:
             raise CalendarInputError("Название должно содержать от 1 до 200 символов")
 
         user_credentials = await self._get_user_credentials(telegram_id)
-        return await self._gateway.create_event(
+        event = await self._gateway.create_event(
             title=title,
             start=start,
             end=start + timedelta(minutes=duration_minutes),
             time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
+        return self._localize_event(event, time_zone)
 
     async def delete_from_text(self, arguments: str | None, telegram_id: int) -> None:
         event_id = (arguments or "").strip()
@@ -232,13 +237,37 @@ class CalendarService:
 
 
         user_credentials = await self._get_user_credentials(telegram_id)
-        return await self._gateway.update_event(
+        event = await self._gateway.update_event(
             event_id,
             start=new_start,
             end=new_end,
             time_zone=str(time_zone),
             user_credentials=user_credentials,
         )
+        return self._localize_event(event, time_zone)
+
+    async def get_time_zone(self, telegram_id: int) -> str:
+        """Возвращает пояс, используемый для ввода и вывода времени."""
+        return str(await self._resolve_time_zone(telegram_id))
+
+    async def set_time_zone(self, telegram_id: int, time_zone: str) -> str:
+        if self._auth_service is None:
+            raise CalendarAuthRequiredError("Нужно пройти /login")
+        return await self._auth_service.set_user_time_zone(telegram_id, time_zone)
+
+    @staticmethod
+    def _localize_event(event: CalendarEvent, time_zone: tzinfo) -> CalendarEvent:
+        """Сохраняет момент события, меняет только пояс представления."""
+        start, end = event.start, event.end
+        if isinstance(start, datetime):
+            if start.tzinfo is None:
+                start = start.replace(tzinfo=time_zone)
+            start = start.astimezone(time_zone)
+        if isinstance(end, datetime):
+            if end.tzinfo is None:
+                end = end.replace(tzinfo=time_zone)
+            end = end.astimezone(time_zone)
+        return replace(event, start=start, end=end)
 
     async def _resolve_time_zone(self, telegram_id: int | None) -> tzinfo:
         if telegram_id is None or self._auth_service is None:
@@ -328,5 +357,5 @@ class CalendarService:
         for event in events:
             start, end, _ = self._event_bounds(event, time_zone)
             if start < range_end and end > range_start:
-                result.append(event)
+                result.append(self._localize_event(event, time_zone))
         return result, time_zone, now, range_start, range_end

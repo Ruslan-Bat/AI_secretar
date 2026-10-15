@@ -28,14 +28,17 @@ class FakeCalendarGateway:
         self.user_credentials: Any | None = None
         self.time_zone_requested: bool = False
         self.updated: tuple[str, datetime, datetime] | None = None
+        self.request_time_zone: str | None = None
 
     async def list_upcoming(
         self,
         *,
         time_min: datetime,
         limit: int,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> list[CalendarEvent]:
+        self.request_time_zone = time_zone
         self.list_call = (
             time_min,
             limit,
@@ -50,8 +53,10 @@ class FakeCalendarGateway:
         title: str,
         start: datetime,
         end: datetime,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> CalendarEvent:
+        self.request_time_zone = time_zone
         self.created = (title, start, end)
         self.user_credentials = user_credentials
         return CalendarEvent(
@@ -76,6 +81,7 @@ class FakeCalendarGateway:
         *,
         start: datetime,
         end: datetime,
+        time_zone: str | None = None,
         user_credentials: Any | None = None,
     ) -> CalendarEvent:
         self.updated = (event_id, start, end)
@@ -614,3 +620,57 @@ async def test_move_event_rejects_invalid_event_id(event_id: str) -> None:
             duration_minutes=60,
             telegram_id=123,
         )
+
+
+@pytest.mark.asyncio
+async def test_upcoming_uses_user_zone_and_localizes_utc_events() -> None:
+    gateway = FakeCalendarGateway()
+    gateway.events = [event_at("meeting", datetime(2026, 7, 18, 15, tzinfo=timezone.utc))]
+
+    events = await make_service_at(gateway).list_upcoming(123)
+
+    assert gateway.request_time_zone == "Europe/Moscow"
+    assert events[0].start.isoformat() == "2026-07-18T18:00:00+03:00"
+    assert events[0].end.isoformat() == "2026-07-18T19:00:00+03:00"
+
+
+@pytest.mark.asyncio
+async def test_day_range_localizes_events_and_keeps_all_day_dates() -> None:
+    gateway = FakeCalendarGateway()
+    gateway.events = [
+        event_at("meeting", datetime(2026, 7, 17, 15, tzinfo=timezone.utc)),
+        all_day_event("holiday", date(2026, 7, 17)),
+    ]
+
+    events = await make_service_at(gateway).get_events(0, 0, 123)
+
+    assert events[0].start.isoformat() == "2026-07-17T18:00:00+03:00"
+    assert events[1].start == date(2026, 7, 17)
+
+
+@pytest.mark.asyncio
+async def test_create_18_moscow_sends_15_utc_and_localizes_google_response() -> None:
+    created = event_at("meeting", datetime(2026, 7, 18, 15, tzinfo=timezone.utc))
+    gateway = SimpleNamespace(create_event=AsyncMock(return_value=created))
+
+    event = await make_service_at(gateway).create_from_text(
+        "2026-07-18 18:00 30 Приготовить поесть", 123
+    )
+
+    arguments = gateway.create_event.await_args.kwargs
+    assert arguments["time_zone"] == "Europe/Moscow"
+    assert arguments["start"].isoformat() == "2026-07-18T18:00:00+03:00"
+    assert arguments["start"].astimezone(timezone.utc).hour == 15
+    assert event.start.hour == 18
+
+
+@pytest.mark.asyncio
+async def test_non_moscow_user_zone_is_respected() -> None:
+    gateway = FakeCalendarGateway()
+
+    await make_service_at(gateway, time_zone="Asia/Almaty").create_from_text(
+        "2026-07-18 18:00 30 Встреча", 123
+    )
+
+    assert gateway.request_time_zone == "Asia/Almaty"
+    assert gateway.created[1].astimezone(timezone.utc).hour == 13

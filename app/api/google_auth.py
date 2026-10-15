@@ -33,6 +33,14 @@ async def google_oauth_callback(
         # Если токен подделан или протух, эта функция выкинет ValueError
         telegram_id = auth_service.verify_state_token(state)
 
+        # Используем бота из текущего runtime, а не фиксированное имя.
+        runtime = request.app.state.bot_runtime
+        if runtime is None:
+            raise RuntimeError("Telegram bot is not running")
+        bot_user = await runtime.bot.me()
+        if not bot_user.username:
+            raise RuntimeError("Telegram bot has no username")
+
         # 2. Отдаем код, проверенный telegram_id и оригинальный state в сервис для обмена на токены
         await auth_service.exchange_code_for_tokens(
             code=code, 
@@ -42,7 +50,7 @@ async def google_oauth_callback(
 
         # 3. Перекидываем пользователя обратно в Telegram
         # Лайфхак: добавили deep link параметр start=auth_success
-        bot_url = "https://t.me/ai_assistent9_bot?start=auth_success"
+        bot_url = f"https://t.me/{bot_user.username}?start=auth_success"
         return RedirectResponse(url=bot_url)
 
     except ValueError as e:

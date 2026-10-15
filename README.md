@@ -239,12 +239,22 @@ GOOGLE_REDIRECT_URI=http://localhost:8000/auth/google/callback
 ## 5. Проверить в Telegram
 
 ```text
+/login
+/timezone Europe/Moscow
+/today
 /calendar
 /add_event 2026-07-20 14:30 60 Тестовая встреча
 /delete_event EVENT_ID
 ```
 
 `/calendar` выводит ID событий. Этот ID нужно передать в `/delete_event`.
+
+`/timezone` показывает текущий часовой пояс. `/timezone Europe/Moscow` сохраняет
+московское время для ввода команд и вывода событий. Пояс Google Calendar может
+быть UTC; при необходимости выберите свой пояс явно. Настройка не переносит
+уже созданные события и сохраняется при повторной авторизации.
+
+После OAuth пользователь возвращается к боту, соответствующему `BOT_TOKEN`.
 
 Если бот сообщает, что календарь не настроен, проверить переменные `.env` и правильность Google OAuth настроек.
 
